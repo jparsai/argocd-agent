@@ -15,10 +15,15 @@
 package metrics
 
 import (
+	"time"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	// "github.com/prometheus/client_golang/prometheus/promhttp"
 )
+
+// ConnectionTimeMap is an utility for AvgAgentConnectionTime
+var ConnectionTimeMap = make(map[string]time.Time)
 
 type ApplicationMetrics struct {
 	ApplicationWatcherMetrics
@@ -40,18 +45,21 @@ type InformerMetrics struct {
 
 // ApplicationWatcherMetrics holds metrics about Applications watched by the agent
 type ApplicationWatcherMetrics struct {
-	AppsWatched      prometheus.Gauge
-	AppsAdded        prometheus.Counter
-	AppsUpdated      prometheus.Counter
-	AppsRemoved      prometheus.Counter
-	AppWatcherErrors prometheus.Counter
+	AppsWatched            prometheus.Gauge
+	AppsAdded              prometheus.Counter
+	AppsUpdated            prometheus.Counter
+	AppsRemoved            prometheus.Counter
+	AppWatcherErrors       prometheus.Counter
+	AgentConnected         prometheus.Gauge
+	AvgAgentConnectionTime prometheus.Gauge
 }
 
 type ApplicationClientMetrics struct {
-	AppsCreated     *prometheus.CounterVec
-	AppsUpdated     *prometheus.CounterVec
-	AppsDeleted     *prometheus.CounterVec
-	AppClientErrors prometheus.Counter
+	AppsCreated       *prometheus.CounterVec
+	AppsUpdated       *prometheus.CounterVec
+	AppsStatusUpdated *prometheus.CounterVec
+	AppsDeleted       *prometheus.CounterVec
+	AppClientErrors   prometheus.Counter
 }
 
 type AppProjectWatcherMetrics struct {
@@ -85,7 +93,7 @@ func NewInformerMetrics(label string) *InformerMetrics {
 
 // NewApplicationWatcherMetrics returns a new instance of ApplicationMetrics
 func NewApplicationWatcherMetrics() *ApplicationWatcherMetrics {
-	am := &ApplicationWatcherMetrics{
+	return &ApplicationWatcherMetrics{
 		AppsWatched: promauto.NewGauge(prometheus.GaugeOpts{
 			Name: "argocd_agent_watcher_applications_watched",
 			Help: "The total number of applications watched by the agent",
@@ -102,8 +110,15 @@ func NewApplicationWatcherMetrics() *ApplicationWatcherMetrics {
 			Name: "argocd_agent_watcher_applications_removed",
 			Help: "The number of applications that have been removed from the agent",
 		}),
+		AgentConnected: promauto.NewGauge(prometheus.GaugeOpts{
+			Name: "argocd_agent_connected_with_principal",
+			Help: "The total number of agents connected with principal",
+		}),
+		AvgAgentConnectionTime: promauto.NewGauge(prometheus.GaugeOpts{
+			Name: "argocd_agent_avg_connection_time",
+			Help: "The average time all agents are connected for",
+		}),
 	}
-	return am
 }
 
 func NewApplicationClientMetrics() *ApplicationClientMetrics {
@@ -115,6 +130,10 @@ func NewApplicationClientMetrics() *ApplicationClientMetrics {
 		AppsUpdated: promauto.NewCounterVec(prometheus.CounterOpts{
 			Name: "argocd_agent_client_applications_updated",
 			Help: "The total number of applications updated by the application client",
+		}, []string{"namespace"}),
+		AppsStatusUpdated: promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: "argocd_agent_client_applications_status_updated",
+			Help: "The total number of applications status updated by the application client",
 		}, []string{"namespace"}),
 		AppsDeleted: promauto.NewCounterVec(prometheus.CounterOpts{
 			Name: "argocd_agent_client_applications_deleted",
