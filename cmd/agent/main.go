@@ -51,6 +51,7 @@ func NewAgentRunCommand() *cobra.Command {
 		tlsClientCrt    string
 		tlsClientKey    string
 		enableWebSocket bool
+		pingInterval    int
 	)
 	command := &cobra.Command{
 		Short: "Run the argocd-agent agent component",
@@ -119,6 +120,8 @@ func NewAgentRunCommand() *cobra.Command {
 			}
 			agentOpts = append(agentOpts, agent.WithRemote(remote))
 			agentOpts = append(agentOpts, agent.WithMode(agentMode))
+			agentOpts = append(agentOpts, agent.WithPingInterval(pingInterval))
+
 			ag, err := agent.NewAgent(ctx, kubeConfig, namespace, agentOpts...)
 			if err != nil {
 				cmdutil.Fatal("Could not create a new agent instance: %v", err)
@@ -166,6 +169,9 @@ func NewAgentRunCommand() *cobra.Command {
 	command.Flags().BoolVar(&enableWebSocket, "enable-websocket",
 		env.BoolWithDefault("ARGOCD_AGENT_ENABLE_WEBSOCKET", false),
 		"Agent will rely on gRPC over WebSocket to stream events to the Principal")
+	command.Flags().IntVar(&pingInterval, "agent-ping-interval",
+		env.NumWithDefault("AGENT_PING_INTERVAL", nil, 0),
+		"Time interval for agent to send a ping event to principal for keeping connection alive")
 
 	command.Flags().StringVar(&kubeConfig, "kubeconfig", "", "Path to a kubeconfig file to use")
 	command.Flags().StringVar(&kubeContext, "kubecontext", "", "Override the default kube context")

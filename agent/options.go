@@ -49,3 +49,10 @@ func WithMode(mode string) AgentOption {
 		return nil
 	}
 }
+
+func WithPingInterval(t int) AgentOption {
+	return func(a *Agent) error {
+		a.options.pingInterval = t
+		return nil
+	}
+}

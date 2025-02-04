@@ -65,6 +65,7 @@ const (
 	TargetAppProject  EventTarget = "appproject"
 	TargetEventAck    EventTarget = "eventProcessed"
 	TargetResource    EventTarget = "resource"
+	TargetPing        EventTarget = "ping"
 )
 
 const (
@@ -256,6 +257,15 @@ func (evs EventSource) ProcessedEvent(evType EventType, ev *Event) *cloudevents.
 	return &cev
 }
 
+func (evs EventSource) PingEvent(evType EventType) *cloudevents.Event {
+	cev := cloudevents.NewEvent()
+	cev.SetSource(evs.source)
+	cev.SetSpecVersion(cloudEventSpecVersion)
+	cev.SetType(evType.String())
+	cev.SetDataSchema(TargetPing.String())
+	return &cev
+}
+
 // FromWire validates an event from the wire in protobuf format, converts it
 // into an Event object and returns it. If the event on the wire is invalid,
 // or could not be converted for another reason, FromWire returns an error.
@@ -283,6 +293,8 @@ func Target(raw *cloudevents.Event) EventTarget {
 		return TargetResource
 	case TargetEventAck.String():
 		return TargetEventAck
+	case TargetPing.String():
+		return TargetPing
 	}
 	return ""
 }

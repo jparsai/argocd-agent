@@ -62,6 +62,8 @@ func (s *Server) processRecvQueue(ctx context.Context, agentName string, q workq
 		err = s.processAppProjectEvent(ctx, agentName, ev)
 	case event.TargetResource:
 		err = s.processResourceEventResponse(ctx, agentName, ev)
+	case event.TargetPing:
+		err = s.processPingEvent()
 	default:
 		err = fmt.Errorf("unknown target: '%s'", target)
 	}
@@ -250,6 +252,12 @@ func (s *Server) processResourceEventResponse(ctx context.Context, agentName str
 	}
 
 	return err
+}
+
+// processPingEvent processes an incoming ping event
+func (s *Server) processPingEvent() error {
+	// Do nothing and return nil since this event is sent just to keep connection alive
+	return nil
 }
 
 // eventProcessor is the main loop to process event from the receiver queue,

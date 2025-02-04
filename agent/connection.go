@@ -68,6 +68,19 @@ func (a *Agent) sender(stream eventstreamapi.EventStream_SubscribeClient) error 
 	if q == nil {
 		return fmt.Errorf("no send queue found for the remote principal")
 	}
+
+	go func() {
+		if a.options.pingInterval > 0 {
+			logCtx.Debugf(fmt.Sprintf("Agent ping to principal is enabled, agent will send a ping event after every %d minutes.", a.options.pingInterval))
+			for {
+				time.Sleep(time.Minute * time.Duration(a.options.pingInterval))
+				a.eventWriter.Add(event.NewEventSource(fmt.Sprintf("agent://%s", a.mode)).PingEvent(event.Ping))
+			}
+		} else {
+			logCtx.Debugf("Agent ping to principal is disabled")
+		}
+	}()
+
 	// Get() is blocking until there is at least one item in the
 	// queue.
 	logCtx.Tracef("Waiting to grab an item from queue as it appears")

@@ -84,6 +84,8 @@ type AgentOptions struct {
 	//
 	// However, as of this writing, this feature is not available.
 	namespaces []string
+
+	pingInterval int
 }
 
 type AgentOption func(*Agent) error
