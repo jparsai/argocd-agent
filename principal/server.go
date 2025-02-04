@@ -115,6 +115,9 @@ type Server struct {
 
 	// metrics holds principal side metrics
 	metrics *metrics.PrincipalMetrics
+
+	// Minimum time duration for agent to wait before sending next ping to principal
+	waitDurationForAgentPing time.Duration
 }
 
 // noAuthEndpoints is a list of endpoints that are available without the need

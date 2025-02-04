@@ -377,3 +377,10 @@ func WithResourceProxyTLS(tlsConfig *tls.Config) ServerOption {
 		return nil
 	}
 }
+
+func WithWaitDurationForAgentPing(interval time.Duration) ServerOption {
+	return func(o *Server) error {
+		o.waitDurationForAgentPing = interval
+		return nil
+	}
+}

@@ -67,6 +67,10 @@ func NewPrincipalRunCommand() *cobra.Command {
 		resourceProxyCertPath  string
 		resourceProxyKeyPath   string
 		resourceProxyCAPath    string
+
+		// Minimum time duration for agent to wait before sending next ping to principal
+		// Ex: "30m", "1h" or "1h20m10s". Valid time units are "s", "m", "h".
+		waitDurationForAgentPing time.Duration
 	)
 	var command = &cobra.Command{
 		Short: "Run the argocd-agent principal component",
@@ -181,6 +185,7 @@ func NewPrincipalRunCommand() *cobra.Command {
 			}
 
 			opts = append(opts, principal.WithWebSocket(enableWebSocket))
+			opts = append(opts, principal.WithWaitDurationForAgentPing(waitDurationForAgentPing))
 
 			s, err := principal.NewServer(ctx, kubeConfig, namespace, opts...)
 			if err != nil {
@@ -275,6 +280,9 @@ func NewPrincipalRunCommand() *cobra.Command {
 	command.Flags().BoolVar(&enableResourceProxy, "enable-resource-proxy",
 		env.BoolWithDefault("ARGOCD_PRINCIPAL_ENABLE_RESOURCE_PROXY", true),
 		"Whether to enable the resource proxy")
+	command.Flags().DurationVar(&waitDurationForAgentPing, "wait-duration-for-agent-ping",
+		cmdutil.ParseKeepAlivePingInterval(env.StringWithDefault("WAIT_DURATION_FOR_AGENT_PING", nil, "")),
+		"Minimum time duration agent should wait before next ping to principal") // It should be less than "keep-alive-ping-interval" of agent
 
 	command.Flags().StringVar(&kubeConfig, "kubeconfig", "", "Path to a kubeconfig file to use")
 	command.Flags().StringVar(&kubeContext, "kubecontext", "", "Override the default kube context")
