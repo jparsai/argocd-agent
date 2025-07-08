@@ -212,10 +212,10 @@ func NewServer(ctx context.Context, kubeClient *kube.KubernetesClient, namespace
 
 	projInformerOpts := []informer.InformerOption[*v1alpha1.AppProject]{
 		informer.WithListHandler[*v1alpha1.AppProject](func(ctx context.Context, opts v1.ListOptions) (runtime.Object, error) {
-			return kubeClient.ApplicationsClientset.ArgoprojV1alpha1().AppProjects("").List(ctx, opts)
+			return kubeClient.ApplicationsClientset.ArgoprojV1alpha1().AppProjects(namespace).List(ctx, opts)
 		}),
 		informer.WithWatchHandler[*v1alpha1.AppProject](func(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
-			return kubeClient.ApplicationsClientset.ArgoprojV1alpha1().AppProjects("").Watch(ctx, opts)
+			return kubeClient.ApplicationsClientset.ArgoprojV1alpha1().AppProjects(namespace).Watch(ctx, opts)
 		}),
 		informer.WithAddHandler[*v1alpha1.AppProject](s.newAppProjectCallback),
 		informer.WithUpdateHandler[*v1alpha1.AppProject](s.updateAppProjectCallback),
@@ -454,6 +454,16 @@ func (s *Server) Start(ctx context.Context, errch chan error) error {
 	}
 	log().Infof("Namespace informer synced and ready")
 
+	if s.options.healthzPort > 0 {
+		// Endpoint to check if the principal is up and running
+		http.HandleFunc("/healthz", s.healthzHandler)
+		healthzAddr := fmt.Sprintf(":%d", s.options.healthzPort)
+
+		log().Infof("Starting healthz server on %s", healthzAddr)
+		//nolint:errcheck
+		go http.ListenAndServe(healthzAddr, nil)
+	}
+
 	return nil
 }
 
@@ -686,4 +696,9 @@ func (s *Server) setAgentMode(namespace string, mode types.AgentMode) {
 	s.clientLock.Lock()
 	defer s.clientLock.Unlock()
 	s.namespaceMap[namespace] = mode
+}
+
+func (s *Server) healthzHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(http.StatusOK)
 }
