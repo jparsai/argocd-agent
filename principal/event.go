@@ -91,6 +91,8 @@ func (s *Server) processRecvQueue(ctx context.Context, agentName string, q workq
 
 	case event.TargetResourceResync:
 		err = s.processIncomingResourceResyncEvent(ctx, agentName, ev)
+	case event.TargetClusterInfo:
+		err = s.processClusterInfoEvent(agentName, ev)
 	default:
 		err = fmt.Errorf("unknown target: '%s'", target)
 	}
@@ -341,6 +343,27 @@ func (s *Server) processAppProjectEvent(ctx context.Context, agentName string, e
 		return fmt.Errorf("unable to process event of type %s", ev.Type())
 	}
 
+	return nil
+}
+
+// processClusterInfoEvent processes an incoming event that contains cluster information from agent.
+func (s *Server) processClusterInfoEvent(agentName string, ev *cloudevents.Event) error {
+	clusterInfo := &v1alpha1.ClusterInfo{}
+	err := ev.DataAs(clusterInfo)
+	if err != nil {
+		return err
+	}
+
+	logCtx := log().WithFields(logrus.Fields{
+		"module":      "QueueProcessor",
+		"client":      agentName,
+		"event":       ev.Type(),
+		"resource_id": event.ResourceID(ev),
+		"event_id":    event.EventID(ev),
+	})
+
+	logCtx.Infof("Processing cluster info event for agent %s", agentName)
+	s.clusterMgr.UpdateClusterCacheInfo(*clusterInfo, agentName)
 	return nil
 }
 
