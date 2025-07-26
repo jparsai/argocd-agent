@@ -33,6 +33,12 @@ import (
 const (
 	// EnvVariablesFromE2EFile holds the env variables that are configured from the e2e tests
 	EnvVariablesFromE2EFile = "/tmp/argocd-agent-e2e"
+
+	// PrincipalName is the name of the principal process
+	PrincipalName = "principal"
+
+	// AgentManagedName is the name of the managed agent process
+	AgentManagedName = "agent-managed"
 )
 
 type BaseSuite struct {

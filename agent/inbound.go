@@ -374,6 +374,12 @@ func (a *Agent) createApplication(incoming *v1alpha1.Application) (*v1alpha1.App
 		return created, nil
 	}
 
+	if a.mode == types.AgentModeManaged {
+		// After successfully creating an application, trigger a cluster cache info update
+		// so that the principal can be notified of the new resource count.
+		go a.addClusterCacheInfoUpdateToQueue("application_created")
+	}
+
 	return created, err
 }
 
@@ -448,8 +454,11 @@ func (a *Agent) deleteApplication(app *v1alpha1.Application) error {
 		return err
 	}
 
-	if a.mode == types.AgentModeManaged && err == nil {
+	if a.mode == types.AgentModeManaged {
 		appCache.DeleteApplicationSpec(app.UID, logCtx)
+		// After successfully deleting an application, trigger a cluster cache info update
+		// so that the principal can be notified of the new resource count.
+		go a.addClusterCacheInfoUpdateToQueue("application_deleted")
 	}
 
 	err = a.appManager.Unmanage(app.QualifiedName())
