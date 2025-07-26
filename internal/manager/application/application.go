@@ -641,8 +641,9 @@ func (m *ApplicationManager) RevertManagedAppChanges(ctx context.Context, app *v
 				}
 				return true
 			}
+		} else {
+			logCtx.Debugf("Application: %s is not available in agent cache", app.Name)
 		}
-		logCtx.Debugf("Application: %s is not available in agent cache", app.Name)
 	}
 	return false
 }

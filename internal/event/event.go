@@ -64,16 +64,18 @@ const (
 	ResponseSyncedResource     EventType = TypePrefix + ".response-synced-resource"
 	EventRequestUpdate         EventType = TypePrefix + ".request-update"
 	EventRequestResourceResync EventType = TypePrefix + ".request-resource-resync"
+	ClusterCacheInfoUpdate     EventType = TypePrefix + ".cluster-cache-info-update"
 )
 
 const (
-	TargetUnknown        EventTarget = "unknown"
-	TargetApplication    EventTarget = "application"
-	TargetAppProject     EventTarget = "appproject"
-	TargetEventAck       EventTarget = "eventProcessed"
-	TargetResource       EventTarget = "resource"
-	TargetRedis          EventTarget = "redis"
-	TargetResourceResync EventTarget = "resourceResync"
+	TargetUnknown                EventTarget = "unknown"
+	TargetApplication            EventTarget = "application"
+	TargetAppProject             EventTarget = "appproject"
+	TargetEventAck               EventTarget = "eventProcessed"
+	TargetResource               EventTarget = "resource"
+	TargetRedis                  EventTarget = "redis"
+	TargetResourceResync         EventTarget = "resourceResync"
+	TargetClusterCacheInfoUpdate EventTarget = "clusterCacheInfoUpdate"
 )
 
 const (
@@ -171,6 +173,19 @@ func (evs EventSource) AppProjectEvent(evType EventType, appProject *v1alpha1.Ap
 	cev.SetDataSchema(TargetAppProject.String())
 	// TODO: Handle this error situation?
 	_ = cev.SetData(cloudevents.ApplicationJSON, appProject)
+	return &cev
+}
+
+func (evs EventSource) ClusterInfoEvent(evType EventType, clusterInfo *v1alpha1.ClusterInfo) *cloudevents.Event {
+	reqUUID := uuid.NewString()
+	cev := cloudevents.NewEvent()
+	cev.SetSource(evs.source)
+	cev.SetSpecVersion(cloudEventSpecVersion)
+	cev.SetType(evType.String())
+	cev.SetExtension(eventID, reqUUID)
+	cev.SetExtension(resourceID, reqUUID)
+	cev.SetDataSchema(TargetClusterCacheInfoUpdate.String())
+	_ = cev.SetData(cloudevents.ApplicationJSON, clusterInfo)
 	return &cev
 }
 
@@ -551,6 +566,8 @@ func Target(raw *cloudevents.Event) EventTarget {
 		return TargetResourceResync
 	case TargetRedis.String():
 		return TargetRedis
+	case TargetClusterCacheInfoUpdate.String():
+		return TargetClusterCacheInfoUpdate
 	}
 	return ""
 }

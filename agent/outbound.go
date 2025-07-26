@@ -15,10 +15,14 @@
 package agent
 
 import (
+	"errors"
+
+	"github.com/argoproj-labs/argocd-agent/internal/argocd/cluster"
 	"github.com/argoproj-labs/argocd-agent/internal/event"
 	"github.com/argoproj-labs/argocd-agent/internal/resources"
 	"github.com/argoproj-labs/argocd-agent/pkg/types"
 	"github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	cacheutil "github.com/argoproj/argo-cd/v3/util/cache"
 	"github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
 )
@@ -56,6 +60,11 @@ func (a *Agent) addAppCreationToQueue(app *v1alpha1.Application) {
 
 	q.Add(a.emitter.ApplicationEvent(event.Create, app))
 	logCtx.WithField("sendq_len", q.Len()).WithField("sendq_name", defaultQueueName).Debugf("Added app create event to send queue")
+
+	// Send the cluster cache info update event to principal.
+	if a.mode == types.AgentModeManaged {
+		a.addClusterCacheInfoUpdateToQueue()
+	}
 }
 
 // addAppUpdateToQueue processes an application update event originating from
@@ -104,6 +113,12 @@ func (a *Agent) addAppUpdateToQueue(old *v1alpha1.Application, new *v1alpha1.App
 		WithField("sendq_len", q.Len()).
 		WithField("sendq_name", defaultQueueName).
 		Debugf("Added event of type %s to send queue", eventType)
+
+	// When sync status changed to Synced, send the cluster cache info update event to principal.
+	if a.mode == types.AgentModeManaged && old.Status.Sync.Status != new.Status.Sync.Status &&
+		new.Status.Sync.Status == v1alpha1.SyncStatusCodeSynced {
+		a.addClusterCacheInfoUpdateToQueue()
+	}
 }
 
 // addAppDeletionToQueue processes an application delete event originating from
@@ -129,6 +144,11 @@ func (a *Agent) addAppDeletionToQueue(app *v1alpha1.Application) {
 
 	q.Add(a.emitter.ApplicationEvent(event.Delete, app))
 	logCtx.WithField("sendq_len", q.Len()).Debugf("Added app delete event to send queue")
+
+	// Send the cluster cache info update event to principal.
+	if a.mode == types.AgentModeManaged {
+		a.addClusterCacheInfoUpdateToQueue()
+	}
 }
 
 // deleteNamespaceCallback is called when the user deletes the agent namespace.
@@ -259,4 +279,38 @@ func (a *Agent) addAppProjectDeletionToQueue(appProject *v1alpha1.AppProject) {
 
 	q.Add(a.emitter.AppProjectEvent(event.Delete, appProject))
 	logCtx.WithField("sendq_len", q.Len()).Debugf("Added appProject delete event to send queue")
+}
+
+// addClusterCacheInfoUpdateToQueue sends the Application, Resource and API stats to principal.
+// This is called periodically in the background when the agent is in managed mode.
+// This is also called when application is created, deleted and sync status is changed to Synced.
+func (a *Agent) addClusterCacheInfoUpdateToQueue() {
+	logCtx := log().WithField("event", "addClusterCacheInfoUpdateToQueue")
+
+	// TODO: get cluster server from agent config
+	clusterServer := "https://kubernetes.default.svc"
+
+	clusterInfo, err := cluster.GetClusterInfo(a.context, a.kubeClient.Clientset, a.namespace, clusterServer, a.redisProxyMsgHandler.redisAddress, cacheutil.RedisCompressionGZip)
+	if err != nil {
+		if !errors.Is(err, cacheutil.ErrCacheMiss) {
+			logCtx.WithError(err).Error("Failed to get cluster info from cache")
+		}
+		return
+	}
+
+	q := a.queues.SendQ(defaultQueueName)
+
+	if q != nil {
+		clusterInfoEvent := a.emitter.ClusterInfoEvent(event.ClusterCacheInfoUpdate, clusterInfo)
+		q.Add(clusterInfoEvent)
+		logCtx.WithFields(logrus.Fields{
+			"sendq_len":         q.Len(),
+			"sendq_name":        defaultQueueName,
+			"applicationsCount": clusterInfo.ApplicationsCount,
+			"apisCount":         clusterInfo.CacheInfo.APIsCount,
+			"resourcesCount":    clusterInfo.CacheInfo.ResourcesCount,
+		}).Info("Added ClusterCacheInfoUpdate event to send queue")
+	} else {
+		logCtx.Error("Default queue not found, unable to send ClusterCacheInfoUpdate event")
+	}
 }
