@@ -104,6 +104,17 @@ func (a *Agent) addAppUpdateToQueue(old *v1alpha1.Application, new *v1alpha1.App
 		WithField("sendq_len", q.Len()).
 		WithField("sendq_name", defaultQueueName).
 		Debugf("Added event of type %s to send queue", eventType)
+
+	// If sync status changed to Synced, immediately refresh cluster cache info in principal
+	if a.mode == types.AgentModeManaged &&
+		old.Status.Sync.Status != new.Status.Sync.Status &&
+		new.Status.Sync.Status == v1alpha1.SyncStatusCodeSynced {
+		logCtx.Info("Application sync status changed to Synced, triggering immediate cluster cache info refresh")
+
+		if err := a.refreshClusterCacheInfo(); err != nil {
+			log().WithError(err).Error("Failed to refresh cluster cache info after sync status change")
+		}
+	}
 }
 
 // addAppDeletionToQueue processes an application delete event originating from

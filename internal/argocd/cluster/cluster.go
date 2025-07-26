@@ -93,7 +93,7 @@ func (m *Manager) refreshClusterConnectionInfo() {
 		clusterInfo := &appv1.ClusterInfo{}
 		if err := cache.GetClusterInfo(cluster.Server, clusterInfo); err != nil {
 			log().Errorf("Failed to get connection info from Cluster: '%s' mapped with Agent: '%s'. Error: %v", cluster.Name, agentName, err)
-			return
+			continue
 		}
 
 		// re-save same info
@@ -102,4 +102,43 @@ func (m *Manager) refreshClusterConnectionInfo() {
 			return
 		}
 	}
+}
+
+func (m *Manager) UpdateClusterCacheInfo(incomingClusterInfor appv1.ClusterInfo, agentName string) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	// Check if we have a mapping for the requested agent
+	cluster := m.mapping(agentName)
+	if cluster == nil {
+		log().Errorf("Agent %s is not mapped to any cluster", agentName)
+		return
+	}
+
+	// Create Redis client and cache
+	redisOptions := &redis.Options{Addr: m.redisAddress}
+
+	if err := common.SetOptionalRedisPasswordFromKubeConfig(m.ctx, m.kubeclient, m.namespace, redisOptions); err != nil {
+		log().Errorf("Failed to fetch & set redis password for namespace %s: %v", m.namespace, err)
+	}
+	redisClient := redis.NewClient(redisOptions)
+
+	cache := appstatecache.NewCache(cacheutil.NewCache(
+		cacheutil.NewRedisCache(redisClient, time.Minute, m.redisCompressionType)), time.Minute)
+
+	// update the info
+	if err := cache.SetClusterInfo(cluster.Server,
+		&appv1.ClusterInfo{
+			ApplicationsCount: incomingClusterInfor.ApplicationsCount,
+			CacheInfo: appv1.ClusterCacheInfo{
+				APIsCount:      incomingClusterInfor.CacheInfo.APIsCount,
+				ResourcesCount: incomingClusterInfor.CacheInfo.ResourcesCount,
+			},
+		},
+	); err != nil {
+		log().Errorf("Failed to update cluster cache info in Cluster: '%s' mapped with Agent: '%s'. Error: %v", cluster.Name, agentName, err)
+		return
+	}
+
+	log().Infof("Updated cluster cache info in Cluster: '%s' mapped with Agent: '%s'", cluster.Name, agentName)
 }

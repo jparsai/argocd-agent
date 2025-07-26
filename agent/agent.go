@@ -347,6 +347,9 @@ func (a *Agent) Start(ctx context.Context) error {
 		go http.ListenAndServe(healthzAddr, nil)
 	}
 
+	// Start the cluster info periodic sync in background
+	a.startPeriodicClusterInfoSync(ctx)
+
 	if a.remote != nil {
 		a.remote.SetClientMode(a.mode)
 		// TODO: Right now, maintainConnection always returns nil. Revisit
