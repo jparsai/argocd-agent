@@ -353,6 +353,23 @@ func (a *Agent) Start(ctx context.Context) error {
 		go http.ListenAndServe(healthzAddr, nil)
 	}
 
+	// Start the background process of periodic sync of cluster cache info.
+	// This will send periodic updates of Application, Resource and API counts to principal.
+	if a.mode == types.AgentModeManaged {
+		go func() {
+			ticker := time.NewTicker(10 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					a.addClusterCacheInfoUpdateToQueue()
+				case <-a.context.Done():
+					return
+				}
+			}
+		}()
+	}
+
 	if a.remote != nil {
 		a.remote.SetClientMode(a.mode)
 		// TODO: Right now, maintainConnection always returns nil. Revisit

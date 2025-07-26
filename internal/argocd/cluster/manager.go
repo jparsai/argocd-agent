@@ -132,9 +132,16 @@ func (m *Manager) Start() error {
 	// because of this info updated by principal are deleted after 10 minutes.
 	// To avoid this we need to re-save same info before cache is expired.
 	go func() {
+		ticker := time.NewTicker(3 * time.Minute)
+		defer ticker.Stop()
+
 		for {
-			go m.refreshClusterConnectionInfo()
-			time.Sleep(3 * time.Minute)
+			select {
+			case <-ticker.C:
+				m.refreshClusterInfo()
+			case <-m.ctx.Done():
+				return
+			}
 		}
 	}()
 

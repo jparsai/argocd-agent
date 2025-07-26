@@ -15,14 +15,21 @@
 package agent
 
 import (
+	"errors"
+
+	"github.com/argoproj-labs/argocd-agent/internal/argocd/cluster"
+	"github.com/argoproj-labs/argocd-agent/internal/cache"
 	"github.com/argoproj-labs/argocd-agent/internal/event"
 	"github.com/argoproj-labs/argocd-agent/internal/logging/logfields"
 	"github.com/argoproj-labs/argocd-agent/internal/resources"
 	"github.com/argoproj-labs/argocd-agent/pkg/types"
 	"github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	cacheutil "github.com/argoproj/argo-cd/v3/util/cache"
 	"github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
 )
+
+var eventSentAfterZeroApps = false
 
 // addAppCreationToQueue processes a new application event originating from the
 // AppInformer and puts it in the send queue.
@@ -260,4 +267,67 @@ func (a *Agent) addAppProjectDeletionToQueue(appProject *v1alpha1.AppProject) {
 
 	q.Add(a.emitter.AppProjectEvent(event.Delete, appProject))
 	logCtx.WithField(logfields.SendQueueLen, q.Len()).Debugf("Added appProject delete event to send queue")
+}
+
+// addClusterCacheInfoUpdateToQueue processes a cluster cache info update event
+// and puts it in the send queue.
+func (a *Agent) addClusterCacheInfoUpdateToQueue() {
+	logCtx := log().WithFields(logrus.Fields{
+		"event": "addClusterCacheInfoUpdateToQueue",
+	})
+
+	clusterServer := "https://kubernetes.default.svc"
+	var clusterInfo *v1alpha1.ClusterInfo
+	var err error
+
+	// Get the updated cluster info from agent's cache.
+	clusterInfo, err = cluster.GetClusterInfo(a.context, a.kubeClient.Clientset, a.namespace, clusterServer, a.redisProxyMsgHandler.redisAddress, cacheutil.RedisCompressionGZip, cache.SourceAgent)
+	if err != nil {
+		if !errors.Is(err, cacheutil.ErrCacheMiss) {
+			logCtx.WithError(err).Errorf("Failed to get cluster info from cache")
+		}
+		return
+	}
+
+	// If the cluster does not have any applications, Argo CD does not update the cluster cache info,
+	// hence there is no need to send events to principal, as information is same as last time.
+	// However, after application count changed to 0, we need to send one last event to principal to share the information after application deletion.
+	// For this, we use eventSentAfterZeroApps flag to track if an event has been sent after application count changed to 0.
+
+	// If the cluster has applications, we reset the eventSentAfterZeroApps flag to false.
+	if clusterInfo.ApplicationsCount != 0 {
+		eventSentAfterZeroApps = false
+	}
+
+	// If one event has been sent after application count changed to 0, then do nothing.
+	if eventSentAfterZeroApps {
+		return
+	}
+
+	// If the cluster has no applications, we set the eventSentAfterZeroApps flag to true.
+	// and send one event to principal to update the cluster cache info.
+	if clusterInfo.ApplicationsCount == 0 {
+		eventSentAfterZeroApps = true
+	}
+
+	// Send the event to principal to update the cluster cache info.
+	q := a.queues.SendQ(defaultQueueName)
+	if q != nil {
+		clusterInfoEvent := a.emitter.ClusterCacheInfoUpdateEvent(event.ClusterCacheInfoUpdate, &event.ClusterCacheInfo{
+			ApplicationsCount: clusterInfo.ApplicationsCount,
+			APIsCount:         clusterInfo.CacheInfo.APIsCount,
+			ResourcesCount:    clusterInfo.CacheInfo.ResourcesCount,
+		})
+
+		q.Add(clusterInfoEvent)
+		logCtx.WithFields(logrus.Fields{
+			"sendq_len":         q.Len(),
+			"sendq_name":        defaultQueueName,
+			"applicationsCount": clusterInfo.ApplicationsCount,
+			"apisCount":         clusterInfo.CacheInfo.APIsCount,
+			"resourcesCount":    clusterInfo.CacheInfo.ResourcesCount,
+		}).Infof("Added ClusterCacheInfoUpdate event to send queue")
+	} else {
+		logCtx.Error("Default queue not found, unable to send ClusterCacheInfoUpdate event")
+	}
 }

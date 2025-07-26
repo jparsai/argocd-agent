@@ -822,3 +822,57 @@ func Test_agentPrefixedProjectName(t *testing.T) {
 		assert.Empty(t, result)
 	})
 }
+
+func Test_processClusterCacheInfoUpdateEvent(t *testing.T) {
+	t.Run("Returns error when event data is invalid", func(t *testing.T) {
+		agentName := "test-agent"
+
+		// Create a event with invalid data
+		ev := cloudevents.NewEvent()
+		ev.SetDataSchema(event.TargetClusterCacheInfoUpdate.String())
+		ev.SetType(event.ClusterCacheInfoUpdate.String())
+		err := ev.SetData(cloudevents.ApplicationJSON, "invalid-json-data")
+		require.NoError(t, err)
+
+		// Create a server with fake client
+		fac := kube.NewKubernetesFakeClientWithApps()
+		s, err := NewServer(context.Background(), fac, "argocd", WithGeneratedTokenSigningKey())
+		require.NoError(t, err)
+		s.setAgentMode(agentName, types.AgentModeAutonomous)
+
+		err = s.processClusterCacheInfoUpdateEvent(agentName, &ev)
+		assert.Error(t, err)
+		assert.ErrorContains(t, err, "failed to unmarshal")
+	})
+
+	t.Run("Processes event with correct data", func(t *testing.T) {
+		agentName := "unmapped-agent"
+		clusterInfo := &event.ClusterCacheInfo{
+			ApplicationsCount: 3,
+			APIsCount:         6,
+			ResourcesCount:    50,
+		}
+
+		// Create a event
+		ev := cloudevents.NewEvent()
+		ev.SetDataSchema(event.TargetClusterCacheInfoUpdate.String())
+		ev.SetType(event.ClusterCacheInfoUpdate.String())
+		ev.SetExtension("eventid", "test-event-456")
+		ev.SetExtension("resourceid", "test-resource-456")
+		err := ev.SetData(cloudevents.ApplicationJSON, clusterInfo)
+		require.NoError(t, err)
+
+		// Create a server with fake client
+		fac := kube.NewKubernetesFakeClientWithApps()
+		s, err := NewServer(context.Background(), fac, "argocd", WithGeneratedTokenSigningKey())
+		require.NoError(t, err)
+		s.setAgentMode(agentName, types.AgentModeAutonomous)
+
+		err = s.processClusterCacheInfoUpdateEvent(agentName, &ev)
+
+		// Should get error about agent not being mapped, the error is expected
+		// as goal of this test is to verify only processClusterCacheInfoUpdateEvent logic
+		assert.Error(t, err)
+		assert.ErrorContains(t, err, "not mapped to any cluster")
+	})
+}
