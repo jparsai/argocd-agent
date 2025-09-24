@@ -1,3 +1,4 @@
 resources:
 - default-project.yaml
 - redis-secret.yaml
+- argocd-redis-deployment.yaml

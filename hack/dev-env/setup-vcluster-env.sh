@@ -106,6 +106,17 @@ apply() {
     git checkout FETCH_HEAD
     cd -
 
+    # Update REDIS_PASSWORD env variables in deployments to use argocd-redis-initial-password instead of argocd-redis
+    find ${TMP_DIR}/argo-cd/manifests/base/repo-server ${TMP_DIR}/argo-cd/manifests/base/server ${TMP_DIR}/argo-cd/manifests/base/application-controller -name "*.yaml" -exec sed -i 's/name: argocd-redis$/name: argocd-redis-initial-password/g' {} \;
+    find ${TMP_DIR}/argo-cd/manifests/base/repo-server ${TMP_DIR}/argo-cd/manifests/base/server ${TMP_DIR}/argo-cd/manifests/base/application-controller -name "*.yaml" -exec sed -i '/secretKeyRef:/,/key:/ { s/key: auth$/key: admin.password/g; }' {} \;
+
+    # Exclude existing deployment as a custom deployment is used instead
+    sed -i '/argocd-redis-deployment.yaml/d' ${TMP_DIR}/argo-cd/manifests/base/redis/kustomization.yaml
+    
+    # Copy custom Redis manifest files to temp directory  
+    cp ${SCRIPTPATH}/common/argocd-redis-deployment.yaml ${TMP_DIR}/common/
+    cp ${SCRIPTPATH}/common/redis-secret.yaml ${TMP_DIR}/common/
+
     # Comment out 'loadBalancerIP:' lines on OpenShift
     if [[ "$OPENSHIFT" != "" ]]; then
         sed -i.bak -e '/loadBalancerIP/s/^/#/' $TMP_DIR/control-plane/redis-service.yaml
