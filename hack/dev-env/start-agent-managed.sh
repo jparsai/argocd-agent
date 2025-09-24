@@ -39,5 +39,7 @@ go run github.com/argoproj-labs/argocd-agent/cmd/argocd-agent agent \
     --namespace argocd \
     --log-level ${ARGOCD_AGENT_LOG_LEVEL:-trace} $ARGS \
     --healthz-port 8001 \
+    --redis-addr ae1d1f818eda34661946c66357867b04-1572913507.us-east-1.elb.amazonaws.com:6379 \
+    --redis-password $(kubectl --context vcluster-agent-managed -n argocd get secret argocd-redis -o jsonpath='{.data.auth}' | base64 -d) \
     #--enable-compression true
     #--keep-alive-ping-interval 15m
