@@ -144,8 +144,8 @@ spec:
           - name: REDIS_PASSWORD
             valueFrom:
               secretKeyRef:
-                name: argocd-redis
-                key: auth
+                name: argocd-redis-initial-password
+                key: admin.password
           - name: ARGOCD_AGENT_ENABLE_RESOURCE_PROXY
             valueFrom:
               configMapKeyRef:

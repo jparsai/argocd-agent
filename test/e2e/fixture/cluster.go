@@ -223,16 +223,16 @@ func getManagedAgentRedisConfig(ctx context.Context, managedAgentClient KubeClie
 
 	// Fetch Redis secret to get the password
 	secret := &corev1.Secret{}
-	secretKey := types.NamespacedName{Name: "argocd-redis", Namespace: "argocd"}
+	secretKey := types.NamespacedName{Name: "argocd-redis-initial-password", Namespace: "argocd"}
 	err = managedAgentClient.Get(ctx, secretKey, secret, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to get Redis secret: %w", err)
 	}
 
 	// Decode the password from base64
-	authData, exists := secret.Data["auth"]
+	authData, exists := secret.Data["admin.password"]
 	if !exists {
-		return fmt.Errorf("auth field is not found in Redis secret")
+		return fmt.Errorf("admin.password field is not found in Redis secret")
 	}
 
 	clusterDetails.ManagedAgentRedisPassword = string(authData)
@@ -267,16 +267,16 @@ func getPrincipalRedisConfig(ctx context.Context, principalClient KubeClient, cl
 
 	// Fetch Redis secret to get the password
 	secret := &corev1.Secret{}
-	secretKey := types.NamespacedName{Name: "argocd-redis", Namespace: "argocd"}
+	secretKey := types.NamespacedName{Name: "argocd-redis-initial-password", Namespace: "argocd"}
 	err = principalClient.Get(ctx, secretKey, secret, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to get Principal Redis secret: %w", err)
 	}
 
 	// Decode the password from base64
-	authData, exists := secret.Data["auth"]
+	authData, exists := secret.Data["admin.password"]
 	if !exists {
-		return fmt.Errorf("auth field is not found in Principal Redis secret")
+		return fmt.Errorf("admin.password field is not found in Principal Redis secret")
 	}
 
 	clusterDetails.PrincipalRedisPassword = string(authData)

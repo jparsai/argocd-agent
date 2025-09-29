@@ -36,7 +36,7 @@ if test "${ARGOCD_PRINCIPAL_REDIS_SERVER_ADDRESS}" = ""; then
 fi
 
 if test "${REDIS_PASSWORD}" = ""; then
-    export REDIS_PASSWORD=$(kubectl get secret argocd-redis --context=vcluster-control-plane -n argocd -o jsonpath='{.data.auth}' | base64 --decode)
+    export REDIS_PASSWORD=$(kubectl get secret argocd-redis-initial-password --context=vcluster-control-plane -n argocd -o jsonpath='{.data.admin\.password}' | base64 --decode)
 fi
 
 # Point the principal to the e2e test configuration if it exists

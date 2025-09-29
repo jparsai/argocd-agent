@@ -24,6 +24,10 @@ SCRIPTPATH="$( cd -- "$(dirname "$0")" >/dev/null 2>&1 ; pwd -P )"
 echo $ARGOCD_AGENT_REMOTE_PORT
 export ARGOCD_AGENT_REMOTE_PORT=${ARGOCD_AGENT_REMOTE_PORT:-8443}
 
+if test "${REDIS_PASSWORD}" = ""; then
+    export REDIS_PASSWORD=$(kubectl get secret argocd-redis-initial-password --context=vcluster-agent-autonomous -n argocd -o jsonpath='{.data.admin\.password}' | base64 --decode)
+fi
+
 # Point the agent to the toxiproxy server if it is configured from the e2e tests
 E2E_ENV_FILE="/tmp/argocd-agent-e2e"
 if [ -f "$E2E_ENV_FILE" ]; then
@@ -40,6 +44,5 @@ go run github.com/argoproj-labs/argocd-agent/cmd/argocd-agent agent \
     --log-level ${ARGOCD_AGENT_LOG_LEVEL:-trace} $ARGS \
     --metrics-port 8182 \
     --healthz-port 8002 \
-    --redis-password $(kubectl --context vcluster-agent-autonomous -n argocd get secret argocd-redis -o jsonpath='{.data.auth}' | base64 -d) \
     #--enable-compression true
     #--keep-alive-ping-interval 15m

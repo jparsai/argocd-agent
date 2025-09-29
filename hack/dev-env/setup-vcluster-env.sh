@@ -106,6 +106,17 @@ apply() {
     git checkout FETCH_HEAD
     cd -
 
+    # Fix ALL upstream references to argocd-redis secret (once and for all!)
+    echo "-> Fixing ALL upstream argocd-redis secret references"
+    find ${TMP_DIR}/argo-cd/manifests -name "*.yaml" -exec sed -i 's/name: argocd-redis$/name: argocd-redis-initial-password/g' {} \;
+    find ${TMP_DIR}/argo-cd/manifests -name "*.yaml" -exec sed -i 's/- name: argocd-redis$/- name: argocd-redis-initial-password/g' {} \;
+    find ${TMP_DIR}/argo-cd/manifests -name "*.yaml" -exec sed -i '/secretKeyRef:/,/key:/ { s/key: auth$/key: admin.password/g; }' {} \;
+    
+    # Remove secret-init containers that create argocd-redis secret
+    echo "-> Removing secret-init containers from upstream manifests"
+    find ${TMP_DIR}/argo-cd/manifests -name "*.yaml" -exec sed -i '/initContainers:/,/containers:/ { /secret-init/,/containers:/ { /containers:/!d; } }' {} \;
+    find ${TMP_DIR}/argo-cd/manifests -name "*.yaml" -exec sed -i '/- name: secret-init/,/^[[:space:]]*[^[:space:]-]/ { /^[[:space:]]*[^[:space:]-]/!d; }' {} \;
+
     # Comment out 'loadBalancerIP:' lines on OpenShift
     if [[ "$OPENSHIFT" != "" ]]; then
         sed -i.bak -e '/loadBalancerIP/s/^/#/' $TMP_DIR/control-plane/redis-service.yaml
