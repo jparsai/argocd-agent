@@ -72,6 +72,14 @@ func (a *Agent) processIncomingEvent(ev *event.Event) error {
 				log().WithError(err).Errorf("Unable to process incoming redis event")
 			}
 		}()
+	case event.TargetExec:
+		go func() {
+			// Process exec request in a separate goroutine to avoid blocking the event thread
+			err := a.processIncomingExecRequest(ev)
+			if err != nil {
+				log().WithError(err).Errorf("Unable to process incoming exec event")
+			}
+		}()
 	default:
 		err = fmt.Errorf("unknown event target - processIncomingEvent: %s", ev.Target())
 	}

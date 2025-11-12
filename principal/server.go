@@ -51,6 +51,7 @@ import (
 	"github.com/argoproj-labs/argocd-agent/internal/tlsutil"
 	"github.com/argoproj-labs/argocd-agent/internal/version"
 	"github.com/argoproj-labs/argocd-agent/pkg/types"
+	"github.com/argoproj-labs/argocd-agent/principal/apis/execstream"
 	"github.com/argoproj-labs/argocd-agent/principal/redisproxy"
 	"github.com/argoproj-labs/argocd-agent/principal/resourceproxy"
 	"github.com/argoproj/argo-cd/v3/common"
@@ -128,6 +129,9 @@ type Server struct {
 	// redisProxy intercepts requests from argo cd to principal redis, and redirects (some of) them to agent redis
 	redisProxy *redisproxy.RedisProxy
 
+	// execStreamServer handles bidirectional streaming for pod exec sessions
+	execStreamServer *execstream.Server
+
 	// resourceProxyListenAddr is the listener address for the resource proxy
 	resourceProxyListenAddr string
 	// resourceProxyTLSConfig is the TLS configuration for the resource proxy
@@ -180,20 +184,21 @@ const defaultRedisProxyListenerAddr = "0.0.0.0:6379"
 
 func NewServer(ctx context.Context, kubeClient *kube.KubernetesClient, namespace string, opts ...ServerOption) (*Server, error) {
 	s := &Server{
-		options:         defaultOptions(),
-		queues:          queue.NewSendRecvQueues(),
-		namespace:       namespace,
-		noauth:          noAuthEndpoints,
-		version:         version.New("argocd-agent"),
-		kubeClient:      kubeClient,
-		resyncStatus:    newResyncStatus(),
-		resources:       resources.NewAgentResources(),
-		notifyOnConnect: make(chan types.Agent),
-		eventWriters:    event.NewEventWritersMap(),
-		repoToAgents:    NewMapToSet(),
-		projectToRepos:  NewMapToSet(),
-		sourceCache:     cache.NewSourceCache(),
-		deletions:       manager.NewDeletionTracker(),
+		options:          defaultOptions(),
+		queues:           queue.NewSendRecvQueues(),
+		namespace:        namespace,
+		noauth:           noAuthEndpoints,
+		version:          version.New("argocd-agent"),
+		kubeClient:       kubeClient,
+		resyncStatus:     newResyncStatus(),
+		resources:        resources.NewAgentResources(),
+		notifyOnConnect:  make(chan types.Agent),
+		eventWriters:     event.NewEventWritersMap(),
+		repoToAgents:     NewMapToSet(),
+		projectToRepos:   NewMapToSet(),
+		sourceCache:      cache.NewSourceCache(),
+		deletions:        manager.NewDeletionTracker(),
+		execStreamServer: execstream.NewServer(),
 	}
 
 	s.ctx, s.ctxCancel = context.WithCancel(ctx)

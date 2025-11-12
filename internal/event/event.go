@@ -64,6 +64,7 @@ const (
 	GetResponse                EventType = TypePrefix + ".response"
 	RedisGenericRequest        EventType = TypePrefix + ".redis-request"
 	RedisGenericResponse       EventType = TypePrefix + ".redis-response"
+	ExecRequest                EventType = TypePrefix + ".exec-request"
 	SyncedResourceList         EventType = TypePrefix + ".request-synced-resource-list"
 	ResponseSyncedResource     EventType = TypePrefix + ".response-synced-resource"
 	EventRequestUpdate         EventType = TypePrefix + ".request-update"
@@ -78,6 +79,7 @@ const (
 	TargetEventAck               EventTarget = "eventProcessed"
 	TargetResource               EventTarget = "resource"
 	TargetRedis                  EventTarget = "redis"
+	TargetExec                   EventTarget = "exec"
 	TargetResourceResync         EventTarget = "resourceResync"
 	TargetClusterCacheInfoUpdate EventTarget = "clusterCacheInfoUpdate"
 	TargetRepository             EventTarget = "repository"
@@ -347,6 +349,30 @@ func HTTPStatusFromError(err error) int {
 	return http.StatusOK
 }
 
+// ContainerExecRequest is an event that holds a request for a pod exec session.
+// It is emitted from the resource proxy when ArgoCD Server requests a terminal session,
+// and is sent from the principal to an agent.
+type ContainerExecRequest struct {
+	// UUID uniquely identifies this exec session
+	UUID string `json:"uuid"`
+	// Namespace of the pod
+	Namespace string `json:"namespace"`
+	// PodName is the name of the pod to exec into
+	PodName string `json:"podName"`
+	// ContainerName is the name of the container within the pod
+	ContainerName string `json:"containerName"`
+	// Command to execute (e.g., ["/bin/sh"])
+	Command []string `json:"command,omitempty"`
+	// TTY indicates if a TTY should be allocated
+	TTY bool `json:"tty"`
+	// Stdin indicates if stdin should be connected
+	Stdin bool `json:"stdin"`
+	// Stdout indicates if stdout should be connected
+	Stdout bool `json:"stdout"`
+	// Stderr indicates if stderr should be connected
+	Stderr bool `json:"stderr"`
+}
+
 func (evs EventSource) NewRedisRequestEvent(connectionUUID string, body RedisCommandBody) (*cloudevents.Event, error) {
 	reqUUID := uuid.NewString()
 	rr := &RedisRequest{
@@ -431,6 +457,21 @@ func (evs EventSource) NewResourceResponseEvent(reqUUID string, status int, data
 	cev.SetExtension(eventID, reqUUID)
 	_ = cev.SetData(cloudevents.ApplicationJSON, rr)
 	return &cev
+}
+
+// NewExecRequestEvent creates a cloud event for requesting a pod exec session from
+// an agent. This is used when the principal receives a WebSocket connection from
+// ArgoCD Server for a terminal session.
+func (evs EventSource) NewExecRequestEvent(execReq *ContainerExecRequest) (*cloudevents.Event, error) {
+	cev := cloudevents.NewEvent()
+	cev.SetSource(evs.source)
+	cev.SetSpecVersion(cloudEventSpecVersion)
+	cev.SetType(ExecRequest.String())
+	cev.SetDataSchema(TargetExec.String())
+	cev.SetExtension(resourceID, execReq.UUID)
+	cev.SetExtension(eventID, execReq.UUID)
+	err := cev.SetData(cloudevents.ApplicationJSON, execReq)
+	return &cev, err
 }
 
 func (evs EventSource) ProcessedEvent(evType EventType, ev *Event) *cloudevents.Event {
@@ -595,6 +636,8 @@ func Target(raw *cloudevents.Event) EventTarget {
 		return TargetResourceResync
 	case TargetRedis.String():
 		return TargetRedis
+	case TargetExec.String():
+		return TargetExec
 	case TargetClusterCacheInfoUpdate.String():
 		return TargetClusterCacheInfoUpdate
 	}
@@ -672,6 +715,13 @@ func (ev Event) ResourceResponse() (*ResourceResponse, error) {
 	resp := &ResourceResponse{}
 	err := ev.event.DataAs(resp)
 	return resp, err
+}
+
+// ExecRequest gets the exec request payload from an event
+func (ev Event) ExecRequest() (*ContainerExecRequest, error) {
+	req := &ContainerExecRequest{}
+	err := ev.event.DataAs(req)
+	return req, err
 }
 
 func (ev Event) RequestSyncedResourceList() (*RequestSyncedResourceList, error) {
