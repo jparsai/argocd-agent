@@ -95,21 +95,6 @@ func (s *Server) processExecRequest(w http.ResponseWriter, r *http.Request, para
 
 	logCtx.Info("WebSocket connection upgraded")
 
-	// CRITICAL: Send immediate fake prompt to satisfy ArgoCD's shell detection
-	// ArgoCD's frontend expects shell output within ~50ms to detect shell availability
-	// Our agent architecture has ~200-300ms inherent latency (event→gRPC→K8s), so we
-	// send an immediate fake prompt that satisfies ArgoCD's detection requirements
-	// Kubernetes exec API WebSocket format: first byte is channel (1=stdout), rest is data
-	// Send a realistic-looking prompt ($ for sh/bash) to make ArgoCD think the shell is ready
-	fakePrompt := []byte{1, '$', ' '} // Channel 1 (stdout) with "$ " prompt
-	err = wsConn.WriteMessage(websocket.BinaryMessage, fakePrompt)
-	if err != nil {
-		logCtx.WithError(err).Warn("Failed to send immediate response, but continuing")
-		// Don't return - continue anyway as this is just for shell detection timing
-	} else {
-		logCtx.Info("Sent immediate fake prompt for shell detection")
-	}
-
 	// Create a unique session UUID
 	sessionUUID := uuid.NewString()
 	logCtx = logCtx.WithField("session_uuid", sessionUUID)
@@ -129,13 +114,12 @@ func (s *Server) processExecRequest(w http.ResponseWriter, r *http.Request, para
 
 	// Create exec session
 	session := &execstream.ExecSession{
-		UUID:           sessionUUID,
-		AgentName:      agentName,
-		WSConn:         wsConn,
-		ToAgent:        make(chan *execstreamapi.ExecStreamData, 100),
-		FromAgent:      make(chan *execstreamapi.ExecStreamData, 100),
-		Done:           make(chan struct{}),
-		AgentConnected: make(chan struct{}),
+		UUID:      sessionUUID,
+		AgentName: agentName,
+		WSConn:    wsConn,
+		ToAgent:   make(chan *execstreamapi.ExecStreamData, 100),
+		FromAgent: make(chan *execstreamapi.ExecStreamData, 100),
+		Done:      make(chan struct{}),
 	}
 
 	// Register the session
@@ -231,9 +215,8 @@ func (s *Server) processExecRequest(w http.ResponseWriter, r *http.Request, para
 				// Try to send data to WebSocket if it's still open
 				select {
 				case <-session.Done:
-					// WebSocket closed during shell testing, but agent produced output!
-					// This is what ArgoCD is looking for!
-					logCtx.WithField("data_size", len(data.Data)).WithField("channel", channel).Info("Agent produced output after WebSocket closed (shell test succeeded)")
+					// Session already closed; drop leftover data
+					logCtx.WithField("data_size", len(data.Data)).WithField("channel", channel).Debug("Dropping data after session closed")
 				default:
 					// WebSocket still open, send the data
 					err := wsConn.WriteMessage(websocket.BinaryMessage, wsData)
@@ -337,50 +320,24 @@ func (s *Server) processExecRequest(w http.ResponseWriter, r *http.Request, para
 		}
 	}()
 
-	// Wait for session to complete
+	// Wait for session to complete or time out
 	select {
 	case <-session.Done:
-		// WebSocket closed - could be shell testing or user disconnect
-		logCtx.Info("WebSocket closed, waiting for agent")
-
-		// Wait for agent to connect and send shell testing output
-		select {
-		case <-session.AgentConnected:
-			logCtx.Info("Agent connected, giving time for shell test output")
-			// Give agent 5 seconds to:
-			// 1. Execute shell command
-			// 2. Send initial output (prompt, etc.)
-			// 3. Complete naturally or timeout
-			time.Sleep(5 * time.Second)
-			logCtx.Info("Shell test period expired, cleaning up")
-
-		case <-time.After(10 * time.Second):
-			// Agent never connected within 10 seconds
-			logCtx.Info("Agent connection timeout, cleaning up")
-		}
-
-		// Close channels to terminate agent's exec
-		func() {
-			defer func() { recover() }()
-			close(session.ToAgent)
-		}()
-		func() {
-			defer func() { recover() }()
-			close(session.FromAgent)
-		}()
-
+		logCtx.Info("Exec session completed, cleaning up")
 	case <-time.After(30 * time.Minute):
 		// Overall session timeout (for long-running terminals)
 		logCtx.Warn("Session timeout after 30 minutes")
-		func() {
-			defer func() { recover() }()
-			close(session.ToAgent)
-		}()
-		func() {
-			defer func() { recover() }()
-			close(session.FromAgent)
-		}()
 	}
+
+	// Ensure channels are closed to terminate the agent exec stream
+	func() {
+		defer func() { recover() }()
+		close(session.ToAgent)
+	}()
+	func() {
+		defer func() { recover() }()
+		close(session.FromAgent)
+	}()
 
 	// Unregister the session from the session manager
 	// At this point, either:

@@ -17,7 +17,6 @@ package execstream
 import (
 	"fmt"
 	"io"
-	"net/http"
 	"sync"
 
 	"github.com/argoproj-labs/argocd-agent/internal/logging"
@@ -41,16 +40,13 @@ type SessionManager struct {
 
 // ExecSession represents an active exec session.
 type ExecSession struct {
-	UUID           string
-	AgentName      string
-	HTTPWriter     http.ResponseWriter
-	WSConn         *websocket.Conn
-	ToAgent        chan *execstreamapi.ExecStreamData
-	FromAgent      chan *execstreamapi.ExecStreamData
-	Done           chan struct{}
-	CloseOnce      sync.Once
-	AgentConnected chan struct{} // Signal when agent connects
-	agentOnce      sync.Once
+	UUID      string
+	AgentName string
+	WSConn    *websocket.Conn
+	ToAgent   chan *execstreamapi.ExecStreamData
+	FromAgent chan *execstreamapi.ExecStreamData
+	Done      chan struct{}
+	CloseOnce sync.Once
 }
 
 // NewServer creates a new ExecStream gRPC server.
@@ -89,11 +85,6 @@ func (s *Server) StreamExec(stream execstreamapi.ExecStreamService_StreamExecSer
 		logCtx.Error("Session not found")
 		return fmt.Errorf("session %s not found", sessionUUID)
 	}
-
-	// Signal that agent has connected
-	session.agentOnce.Do(func() {
-		close(session.AgentConnected)
-	})
 
 	logCtx.Info("Exec session established with agent")
 
