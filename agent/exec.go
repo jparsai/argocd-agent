@@ -124,6 +124,17 @@ func (a *Agent) execInPod(ctx context.Context, stream execstreamapi.ExecStreamSe
 	execCtx, cancelExec := context.WithCancel(ctx)
 	defer cancelExec()
 
+	// Create terminal size queue with default dimensions
+	// This is CRITICAL - shells won't produce prompts without terminal size
+	sizeQueue := &terminalSizeQueue{
+		sizes: make(chan *remotecommand.TerminalSize, 10), // Buffer for resize events
+	}
+	// Send initial terminal size (80x24 is standard default)
+	sizeQueue.sizes <- &remotecommand.TerminalSize{
+		Width:  80,
+		Height: 24,
+	}
+
 	// Create stream handler
 	streamHandler := &execStreamHandler{
 		stream:      stream,
@@ -131,6 +142,7 @@ func (a *Agent) execInPod(ctx context.Context, stream execstreamapi.ExecStreamSe
 		stdin:       make(chan []byte, 100),
 		done:        make(chan struct{}),
 		cancelExec:  cancelExec,
+		sizeQueue:   sizeQueue,
 		logCtx:      logCtx,
 	}
 
@@ -150,17 +162,6 @@ func (a *Agent) execInPod(ctx context.Context, stream execstreamapi.ExecStreamSe
 			logCtx.Info("Stream closed before newline could be sent")
 		}
 	}()
-
-	// Create terminal size queue with default dimensions
-	// This is CRITICAL - shells won't produce prompts without terminal size
-	sizeQueue := &terminalSizeQueue{
-		sizes: make(chan *remotecommand.TerminalSize, 1),
-	}
-	// Send initial terminal size (80x24 is standard default)
-	sizeQueue.sizes <- &remotecommand.TerminalSize{
-		Width:  80,
-		Height: 24,
-	}
 
 	// Execute with the stream handler
 	err = exec.StreamWithContext(execCtx, remotecommand.StreamOptions{
@@ -196,6 +197,7 @@ type execStreamHandler struct {
 	stdin       chan []byte
 	done        chan struct{}
 	cancelExec  context.CancelFunc
+	sizeQueue   *terminalSizeQueue
 	logCtx      *logrus.Entry
 }
 
@@ -283,6 +285,27 @@ func (h *execStreamHandler) receiveFromPrincipal() {
 			// Close stdin channel to signal end of input
 			// Don't cancel exec - let it complete naturally
 			return
+		}
+
+		// Handle terminal resize
+		if msg.Resize {
+			h.logCtx.WithFields(logrus.Fields{
+				"cols": msg.Cols,
+				"rows": msg.Rows,
+			}).Info("Received terminal resize from principal")
+			// Send resize to terminal size queue
+			select {
+			case h.sizeQueue.sizes <- &remotecommand.TerminalSize{
+				Width:  uint16(msg.Cols),
+				Height: uint16(msg.Rows),
+			}:
+			case <-h.done:
+				return
+			default:
+				// Queue full, skip this resize
+				h.logCtx.Warn("Terminal size queue full, skipping resize")
+			}
+			continue
 		}
 
 		if len(msg.Data) > 0 && msg.StreamType == "stdin" {
