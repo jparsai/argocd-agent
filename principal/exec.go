@@ -15,6 +15,7 @@
 package principal
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -30,27 +31,24 @@ import (
 	remotecommandconsts "k8s.io/apimachinery/pkg/util/remotecommand"
 )
 
-// WebSocket upgrader for exec connections
+// execUpgrader will convert HTTP exec requests into WebSocket.
 var execUpgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
 	Subprotocols: append(
 		[]string{remotecommandconsts.StreamProtocolV5Name},
 		remotecommandconsts.SupportedStreamingProtocols...,
 	),
 	CheckOrigin: func(r *http.Request) bool {
-		// In production, implement proper origin checking
+		// TODO: Need to implement logic to allow only ArgoCD UI to connect
 		return true
 	},
 }
 
-// processExecRequest handles pod exec requests from ArgoCD Server.
-// It upgrades the HTTP connection to WebSocket and bridges it with the agent via gRPC.
+const execSessionTimeout = 30 * time.Minute
+
+// processExecRequest handles an exec subresource request by upgrading the HTTP connection to a WebSocket,
+// verifying agent connection, and implementing exec streaming to a target pod/container via the connected agent.
 func (s *Server) processExecRequest(w http.ResponseWriter, r *http.Request, params resourceproxy.Params, agentName string) {
-	logCtx := log().WithFields(logrus.Fields{
-		"function": "processExecRequest",
-		"agent":    agentName,
-	})
+	logCtx := log().WithField("function", "processExecRequest")
 
 	// Extract parameters from the request
 	namespace := params.Get("namespace")
@@ -60,13 +58,15 @@ func (s *Server) processExecRequest(w http.ResponseWriter, r *http.Request, para
 
 	if podName == "" {
 		logCtx.Error("Pod name is required")
-		http.Error(w, "Pod name is required", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("pod name is required"))
 		return
 	}
 
 	if namespace == "" {
 		logCtx.Error("Namespace is required")
-		http.Error(w, "Namespace is required", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("namespace is required"))
 		return
 	}
 
@@ -81,11 +81,12 @@ func (s *Server) processExecRequest(w http.ResponseWriter, r *http.Request, para
 	// Check if the agent is connected
 	if !s.queues.HasQueuePair(agentName) {
 		logCtx.Warn("Agent is not connected")
-		http.Error(w, "Agent not connected", http.StatusBadGateway)
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte("agent not connected"))
 		return
 	}
 
-	// Upgrade to WebSocket
+	// Upgrade HTTP request to WebSocket
 	wsConn, err := execUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		logCtx.WithError(err).Error("Failed to upgrade to WebSocket")
@@ -124,6 +125,7 @@ func (s *Server) processExecRequest(w http.ResponseWriter, r *http.Request, para
 
 	// Register the session
 	s.execStreamServer.RegisterSession(session)
+	defer s.execStreamServer.UnregisterSession(sessionUUID)
 
 	logCtx.Info("Exec session registered")
 
@@ -131,220 +133,225 @@ func (s *Server) processExecRequest(w http.ResponseWriter, r *http.Request, para
 	execEvent, err := s.events.NewExecRequestEvent(execReq)
 	if err != nil {
 		logCtx.WithError(err).Error("Failed to create exec event")
-		s.execStreamServer.UnregisterSession(sessionUUID)
 		return
 	}
 
 	q := s.queues.SendQ(agentName)
 	if q == nil {
 		logCtx.Error("Send queue not found")
-		s.execStreamServer.UnregisterSession(sessionUUID)
 		return
 	}
 
 	q.Add(execEvent)
 	logCtx.Info("Exec request event sent to agent")
 
-	// Start goroutine to read from Agent and send to WebSocket (stdout/stderr)
-	go func() {
-		defer func() {
-			logCtx.Info("Agent→WebSocket goroutine exited")
-			// Don't call session.Close() here - it closes channels too early
-			// Just signal Done
-			select {
-			case <-session.Done:
-				// Already closed
-			default:
-				close(session.Done)
-			}
-		}()
+	go s.agentToWebSocketChannel(session, logCtx)
+	go s.webSocketToAgentChannel(session, logCtx)
 
-		for {
-			data, ok := <-session.FromAgent
-			if !ok {
-				// Channel closed by agent - exec finished
-				logCtx.Info("FromAgent channel closed")
-				return
-			}
-
-			// Handle different message types
-			if data.Error != "" {
-				logCtx.WithField("error", data.Error).Error("Agent reported error")
-				// Try to send error to WebSocket if it's still open
-				select {
-				case <-session.Done:
-					logCtx.Debug("WebSocket closed, cannot send error")
-				default:
-					_ = wsConn.WriteMessage(websocket.TextMessage, []byte(data.Error))
-				}
-				return
-			}
-
-			if data.Eof {
-				logCtx.Info("Agent sent EOF")
-				select {
-				case <-session.Done:
-					logCtx.Debug("WebSocket closed, cannot send EOF")
-				default:
-					_ = wsConn.WriteMessage(websocket.CloseMessage,
-						websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-				}
-				return
-			}
-
-			if len(data.Data) > 0 {
-				// Kubernetes exec API WebSocket format requires channel prefix
-				// Channel 0: stdin, 1: stdout, 2: stderr, 3: error
-				var channel byte
-				switch data.StreamType {
-				case "stdout":
-					channel = 1
-				case "stderr":
-					channel = 2
-				case "error":
-					channel = 3
-				default:
-					channel = 1 // Default to stdout
-				}
-
-				// Prepend channel byte to data
-				wsData := make([]byte, len(data.Data)+1)
-				wsData[0] = channel
-				copy(wsData[1:], data.Data)
-
-				// Try to send data to WebSocket if it's still open
-				select {
-				case <-session.Done:
-					// Session already closed; drop leftover data
-					logCtx.WithField("data_size", len(data.Data)).WithField("channel", channel).Debug("Dropping data after session closed")
-				default:
-					// WebSocket still open, send the data
-					err := wsConn.WriteMessage(websocket.BinaryMessage, wsData)
-					if err != nil {
-						logCtx.WithError(err).Error("Failed to write to WebSocket")
-						return
-					}
-					logCtx.WithField("data_size", len(data.Data)).WithField("channel", channel).Debug("Sent data to WebSocket")
-				}
-			}
-		}
-	}()
-
-	// Start goroutine to read from WebSocket and send to agent (stdin)
-	go func() {
-		defer func() {
-			logCtx.Info("WebSocket→Agent goroutine exited")
-			// Signal that WebSocket is closed
-			// Don't send EOF - let the exec complete naturally
-			select {
-			case <-session.Done:
-				// Already closed
-			default:
-				close(session.Done)
-			}
-		}()
-
-		for {
-			select {
-			case <-session.Done:
-				return
-			default:
-			}
-
-			messageType, data, err := wsConn.ReadMessage()
-			if err != nil {
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
-					logCtx.WithError(err).Warn("WebSocket closed unexpectedly")
-				} else {
-					logCtx.Info("WebSocket closed")
-				}
-				return
-			}
-
-			if messageType == websocket.BinaryMessage || messageType == websocket.TextMessage {
-				// Check if this is a JSON message (ArgoCD sends resize as JSON)
-				if messageType == websocket.TextMessage || (len(data) > 0 && data[0] == '{') {
-					// Try to parse as JSON for resize operations
-					var resizeMsg struct {
-						Operation string `json:"operation"`
-						Cols      uint32 `json:"cols"`
-						Rows      uint32 `json:"rows"`
-					}
-					if err := json.Unmarshal(data, &resizeMsg); err == nil && resizeMsg.Operation == "resize" {
-						logCtx.WithFields(logrus.Fields{
-							"cols": resizeMsg.Cols,
-							"rows": resizeMsg.Rows,
-						}).Info("Received terminal resize from WebSocket")
-						// Send resize to agent
-						select {
-						case session.ToAgent <- &execstreamapi.ExecStreamData{
-							RequestUuid: sessionUUID,
-							Resize:      true,
-							Cols:        resizeMsg.Cols,
-							Rows:        resizeMsg.Rows,
-						}:
-						case <-session.Done:
-							return
-						}
-						continue
-					}
-				}
-
-				// Kubernetes exec API WebSocket format: first byte is channel
-				// Channel 0: stdin, so we expect incoming messages to have channel 0 prefix
-				var stdinData []byte
-				if len(data) > 0 {
-					// Strip channel prefix (first byte)
-					if data[0] == 0 {
-						// Proper stdin message with channel 0
-						stdinData = data[1:]
-					} else {
-						// Fallback: if no channel prefix or wrong channel, use all data
-						stdinData = data
-					}
-				} else {
-					stdinData = data
-				}
-
-				// Send stdin data to agent
-				select {
-				case session.ToAgent <- &execstreamapi.ExecStreamData{
-					RequestUuid: sessionUUID,
-					Data:        stdinData,
-					StreamType:  "stdin",
-				}:
-				case <-session.Done:
-					return
-				}
-			}
-		}
-	}()
+	ctx, cancel := context.WithTimeout(s.ctx, execSessionTimeout)
+	defer cancel()
 
 	// Wait for session to complete or time out
 	select {
 	case <-session.Done:
 		logCtx.Info("Exec session completed, cleaning up")
-	case <-time.After(30 * time.Minute):
+	case <-ctx.Done():
 		// Overall session timeout (for long-running terminals)
 		logCtx.Warn("Session timeout after 30 minutes")
 	}
 
 	// Ensure channels are closed to terminate the agent exec stream
-	func() {
-		defer func() { recover() }()
-		close(session.ToAgent)
-	}()
-	func() {
-		defer func() { recover() }()
-		close(session.FromAgent)
-	}()
-
-	// Unregister the session from the session manager
-	// At this point, either:
-	// 1. Agent never connected and channels are closed
-	// 2. Agent finished exec and closed channels
-	// 3. Timeout occurred and we closed channels
-	s.execStreamServer.UnregisterSession(sessionUUID)
+	closeExecStreamChannels(session)
 
 	logCtx.Info("Exec session unregistered")
+}
+
+func (s *Server) agentToWebSocketChannel(session *execstream.ExecSession, logCtx *logrus.Entry) {
+	wsConn := session.WSConn
+	defer func() {
+		logCtx.Info("Agent to WebSocket channel goroutine exited")
+		select {
+		case <-session.Done:
+		default:
+			close(session.Done)
+		}
+	}()
+
+	for {
+		data, ok := <-session.FromAgent
+		if !ok {
+			logCtx.Info("FromAgent channel closed")
+			return
+		}
+
+		if data.Error != "" {
+			logCtx.WithField("error", data.Error).Error("Agent reported error")
+			notifyWebSocketError(wsConn, session.Done, data.Error, logCtx)
+			return
+		}
+
+		if data.Eof {
+			logCtx.Info("Agent sent EOF")
+			notifyWebSocketEOF(wsConn, session.Done, logCtx)
+			return
+		}
+
+		if len(data.Data) == 0 {
+			continue
+		}
+
+		channel := streamChannel(data.StreamType)
+		wsData := make([]byte, len(data.Data)+1)
+		wsData[0] = channel
+		copy(wsData[1:], data.Data)
+
+		select {
+		case <-session.Done:
+			logCtx.WithField("data_size", len(data.Data)).WithField("channel", channel).Debug("Dropping data after session closed")
+		default:
+			if err := wsConn.WriteMessage(websocket.BinaryMessage, wsData); err != nil {
+				logCtx.WithError(err).Error("Failed to write to WebSocket")
+				return
+			}
+			logCtx.WithField("data_size", len(data.Data)).WithField("channel", channel).Debug("Sent data to WebSocket")
+		}
+	}
+}
+
+func (s *Server) webSocketToAgentChannel(session *execstream.ExecSession, logCtx *logrus.Entry) {
+	wsConn := session.WSConn
+	defer func() {
+		logCtx.Info("WebSocket to Agent channel goroutine exited")
+		select {
+		case <-session.Done:
+		default:
+			close(session.Done)
+		}
+	}()
+
+	for {
+		select {
+		case <-session.Done:
+			return
+		default:
+		}
+
+		messageType, data, err := wsConn.ReadMessage()
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
+				logCtx.WithError(err).Warn("WebSocket closed unexpectedly")
+			} else {
+				logCtx.Info("WebSocket closed")
+			}
+			return
+		}
+
+		if messageType != websocket.BinaryMessage && messageType != websocket.TextMessage {
+			continue
+		}
+
+		if s.handleResizeMessage(session, data, logCtx) {
+			continue
+		}
+
+		stdinData := normalizeStdinPayload(data)
+		select {
+		case session.ToAgent <- &execstreamapi.ExecStreamData{
+			RequestUuid: session.UUID,
+			Data:        stdinData,
+			StreamType:  "stdin",
+		}:
+		case <-session.Done:
+			return
+		}
+	}
+}
+
+func (s *Server) handleResizeMessage(session *execstream.ExecSession, data []byte, logCtx *logrus.Entry) bool {
+	if len(data) == 0 {
+		return false
+	}
+
+	if data[0] != '{' {
+		return false
+	}
+
+	var resizeMsg struct {
+		Operation string `json:"operation"`
+		Cols      uint32 `json:"cols"`
+		Rows      uint32 `json:"rows"`
+	}
+
+	if err := json.Unmarshal(data, &resizeMsg); err != nil || resizeMsg.Operation != "resize" {
+		return false
+	}
+
+	logCtx.WithFields(logrus.Fields{
+		"cols": resizeMsg.Cols,
+		"rows": resizeMsg.Rows,
+	}).Info("Received terminal resize from WebSocket")
+
+	select {
+	case session.ToAgent <- &execstreamapi.ExecStreamData{
+		RequestUuid: session.UUID,
+		Resize:      true,
+		Cols:        resizeMsg.Cols,
+		Rows:        resizeMsg.Rows,
+	}:
+	case <-session.Done:
+	}
+
+	return true
+}
+
+func streamChannel(streamType string) byte {
+	switch streamType {
+	case "stderr":
+		return 2
+	case "error":
+		return 3
+	default:
+		return 1
+	}
+}
+
+func normalizeStdinPayload(data []byte) []byte {
+	if len(data) == 0 {
+		return data
+	}
+	if data[0] == 0 {
+		return data[1:]
+	}
+	return data
+}
+
+func notifyWebSocketError(wsConn *websocket.Conn, done <-chan struct{}, msg string, logCtx *logrus.Entry) {
+	select {
+	case <-done:
+		logCtx.Debug("WebSocket closed, cannot send error")
+	default:
+		_ = wsConn.WriteMessage(websocket.TextMessage, []byte(msg))
+	}
+}
+
+func notifyWebSocketEOF(wsConn *websocket.Conn, done <-chan struct{}, logCtx *logrus.Entry) {
+	select {
+	case <-done:
+		logCtx.Debug("WebSocket closed, cannot send EOF")
+	default:
+		_ = wsConn.WriteMessage(
+			websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
+		)
+	}
+}
+
+func closeExecStreamChannels(session *execstream.ExecSession) {
+	safeCloseExecStreamDataChan(session.ToAgent)
+	safeCloseExecStreamDataChan(session.FromAgent)
+}
+
+func safeCloseExecStreamDataChan(ch chan *execstreamapi.ExecStreamData) {
+	defer func() { recover() }()
+	close(ch)
 }
