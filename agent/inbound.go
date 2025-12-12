@@ -76,6 +76,14 @@ func (a *Agent) processIncomingEvent(ev *event.Event) error {
 		}()
 	case event.TargetContainerLog:
 		err = a.processIncomingContainerLogRequest(ev)
+	case event.TargetExec:
+		// Process exec request in a separate goroutine to avoid blocking the event thread
+		go func() {
+			err := a.processIncomingExecRequest(ev)
+			if err != nil {
+				log().WithError(err).Errorf("Unable to process incoming exec event")
+			}
+		}()
 	default:
 		err = fmt.Errorf("unknown event target - processIncomingEvent: %s", ev.Target())
 	}

@@ -71,6 +71,7 @@ const (
 	EventRequestUpdate         EventType = TypePrefix + ".request-update"
 	EventRequestResourceResync EventType = TypePrefix + ".request-resource-resync"
 	ClusterCacheInfoUpdate     EventType = TypePrefix + ".cluster-cache-info-update"
+	ExecRequest                EventType = TypePrefix + ".exec-request"
 )
 
 const (
@@ -84,6 +85,7 @@ const (
 	TargetClusterCacheInfoUpdate EventTarget = "clusterCacheInfoUpdate"
 	TargetRepository             EventTarget = "repository"
 	TargetContainerLog           EventTarget = "containerlog"
+	TargetExec                   EventTarget = "exec"
 )
 
 const (
@@ -602,6 +604,8 @@ func Target(raw *cloudevents.Event) EventTarget {
 		return TargetClusterCacheInfoUpdate
 	case TargetContainerLog.String():
 		return TargetContainerLog
+	case TargetExec.String():
+		return TargetExec
 	}
 	return ""
 }
@@ -1270,4 +1274,36 @@ func (ev *Event) ContainerLogRequest() (*ContainerLogRequest, error) {
 	logReq := &ContainerLogRequest{}
 	err := ev.event.DataAs(logReq)
 	return logReq, err
+}
+
+type ContainerExecRequest struct {
+	UUID          string   `json:"uuid"`
+	Namespace     string   `json:"namespace"`
+	PodName       string   `json:"podName"`
+	ContainerName string   `json:"containerName"`
+	Command       []string `json:"command,omitempty"`
+	TTY           bool     `json:"tty"`
+	Stdin         bool     `json:"stdin"`
+	Stdout        bool     `json:"stdout"`
+	Stderr        bool     `json:"stderr"`
+}
+
+// NewExecRequestEvent creates a cloud event for requesting a pod exec session from an agent.
+func (evs EventSource) NewExecRequestEvent(execReq *ContainerExecRequest) (*cloudevents.Event, error) {
+	cev := cloudevents.NewEvent()
+	cev.SetSource(evs.source)
+	cev.SetSpecVersion(cloudEventSpecVersion)
+	cev.SetType(ExecRequest.String())
+	cev.SetDataSchema(TargetExec.String())
+	cev.SetExtension(resourceID, execReq.UUID)
+	cev.SetExtension(eventID, execReq.UUID)
+	err := cev.SetData(cloudevents.ApplicationJSON, execReq)
+	return &cev, err
+}
+
+// ExecRequest gets the exec request payload from an event.
+func (ev Event) ExecRequest() (*ContainerExecRequest, error) {
+	req := &ContainerExecRequest{}
+	err := ev.event.DataAs(req)
+	return req, err
 }
