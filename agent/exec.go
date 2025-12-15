@@ -136,23 +136,6 @@ func (a *Agent) execInPod(ctx context.Context, stream execstreamapi.ExecStreamSe
 		return fmt.Errorf("failed to create WebSocket executor: %w", err)
 	}
 
-	// // COMMENTED OUT: Fallback to SPDY for older clusters
-	// // Create SPDY executor
-	// spdyExec, err := remotecommand.NewSPDYExecutor(a.kubeClient.RestConfig, "POST", req.URL())
-	// if err != nil {
-	// 	return fmt.Errorf("failed to create SPDY executor: %w", err)
-	// }
-	// // Try WebSocket executor as fallback
-	// websocketExec, wsErr := remotecommand.NewWebSocketExecutor(a.kubeClient.RestConfig, "GET", req.URL().String())
-	// if wsErr == nil {
-	// 	fallbackExec, fallbackErr := remotecommand.NewFallbackExecutor(websocketExec, spdyExec, func(err error) bool {
-	// 		return true // Always try fallback
-	// 	})
-	// 	if fallbackErr == nil {
-	// 		exec = fallbackExec
-	// 	}
-	// }
-
 	// Create cancellable context for the exec
 	// This allows us to terminate the exec when EOF is received from principal
 	execCtx, cancelExec := context.WithCancel(ctx)
