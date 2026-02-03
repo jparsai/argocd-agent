@@ -72,6 +72,9 @@ type ServerOptions struct {
 	// insecurePlaintext disables TLS on the gRPC server. Use when Istio sidecar
 	// handles mTLS termination.
 	insecurePlaintext bool
+
+	selfClusterRegistrationEnabled bool
+	resourceProxyAddress           string
 }
 
 type ServerOption func(o *Server) error
@@ -86,6 +89,8 @@ func defaultOptions() *ServerOptions {
 		eventProcessors:     10,
 		rootCa:              x509.NewCertPool(),
 		informerSyncTimeout: 60 * time.Second,
+
+		resourceProxyAddress: "argocd-agent-resource-proxy:9090",
 	}
 }
 
@@ -496,6 +501,20 @@ func WithInsecurePlaintext() ServerOption {
 	return func(o *Server) error {
 		log().Warn("INSECURE: gRPC server will run in plaintext mode - ensure Istio or similar service mesh provides mTLS")
 		o.options.insecurePlaintext = true
+		return nil
+	}
+}
+
+func WithClusterRegistration(enabled bool) ServerOption {
+	return func(o *Server) error {
+		o.options.selfClusterRegistrationEnabled = enabled
+		return nil
+	}
+}
+
+func WithResourceProxyAddress(address string) ServerOption {
+	return func(o *Server) error {
+		o.options.resourceProxyAddress = address
 		return nil
 	}
 }
