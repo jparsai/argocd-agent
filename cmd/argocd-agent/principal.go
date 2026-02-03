@@ -73,6 +73,7 @@ func NewPrincipalRunCommand() *cobra.Command {
 		autoNamespaceLabels       []string
 		enableWebSocket           bool
 		enableResourceProxy       bool
+		resourceProxyAddress      string
 		pprofPort                 int
 		resourceProxySecretName   string
 		resourceProxyCertPath     string
@@ -97,6 +98,8 @@ func NewPrincipalRunCommand() *cobra.Command {
 		// OpenTelemetry configuration
 		otlpAddress  string
 		otlpInsecure bool
+
+		enableSelfClusterRegistration bool
 	)
 	command := &cobra.Command{
 		Use:   "principal",
@@ -236,6 +239,7 @@ func NewPrincipalRunCommand() *cobra.Command {
 					cmdutil.Fatal("Error reading TLS config for resource proxy: %v", err)
 				}
 				opts = append(opts, principal.WithResourceProxyTLS(proxyTLS))
+				opts = append(opts, principal.WithResourceProxyAddress(resourceProxyAddress))
 			}
 
 			if jwtKey != "" {
@@ -323,6 +327,9 @@ func NewPrincipalRunCommand() *cobra.Command {
 			opts = append(opts, principal.WithKeepAliveMinimumInterval(keepAliveMinimumInterval))
 			opts = append(opts, principal.WithRedis(redisAddress, redisPassword, redisCompressionType))
 			opts = append(opts, principal.WithHealthzPort(healthzPort))
+
+			// Self cluster registration options
+			opts = append(opts, principal.WithClusterRegistration(enableSelfClusterRegistration))
 
 			s, err := principal.NewServer(ctx, kubeConfig, namespace, opts...)
 			if err != nil {
@@ -445,6 +452,10 @@ func NewPrincipalRunCommand() *cobra.Command {
 	command.Flags().BoolVar(&enableResourceProxy, "enable-resource-proxy",
 		env.BoolWithDefault("ARGOCD_PRINCIPAL_ENABLE_RESOURCE_PROXY", true),
 		"Whether to enable the resource proxy")
+	command.Flags().StringVar(&resourceProxyAddress, "resource-proxy-address",
+		env.StringWithDefault("ARGOCD_PRINCIPAL_RESOURCE_PROXY_ADDRESS", nil, "argocd-agent-resource-proxy:9090"),
+		"Resource proxy address on principal side")
+
 	command.Flags().DurationVar(&keepAliveMinimumInterval, "keepalive-min-interval",
 		env.DurationWithDefault("ARGOCD_PRINCIPAL_KEEP_ALIVE_MIN_INTERVAL", nil, 0),
 		"Drop agent connections that send keepalive pings more often than the specified interval") // It should be less than "keep-alive-ping-interval" of agent
@@ -475,6 +486,10 @@ func NewPrincipalRunCommand() *cobra.Command {
 
 	command.Flags().StringVar(&kubeConfig, "kubeconfig", "", "Path to a kubeconfig file to use")
 	command.Flags().StringVar(&kubeContext, "kubecontext", "", "Override the default kube context")
+
+	command.Flags().BoolVar(&enableSelfClusterRegistration, "enable-self-cluster-registration",
+		env.BoolWithDefault("ARGOCD_PRINCIPAL_ENABLE_SELF_CLUSTER_REGISTRATION", false),
+		"Allow agents with valid client certificates to self-register on connection")
 
 	return command
 }

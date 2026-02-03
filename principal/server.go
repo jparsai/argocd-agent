@@ -54,6 +54,7 @@ import (
 	"github.com/argoproj-labs/argocd-agent/pkg/types"
 	logstream "github.com/argoproj-labs/argocd-agent/principal/apis/logstreamapi"
 	"github.com/argoproj-labs/argocd-agent/principal/apis/terminalstream"
+	"github.com/argoproj-labs/argocd-agent/principal/clusterregistration"
 	"github.com/argoproj-labs/argocd-agent/principal/redisproxy"
 	"github.com/argoproj-labs/argocd-agent/principal/resourceproxy"
 	"github.com/argoproj/argo-cd/v3/common"
@@ -167,6 +168,9 @@ type Server struct {
 
 	// terminalStreamServer handles bidirectional streaming for web terminal sessions
 	terminalStreamServer *terminalstream.Server
+
+	// clusterRegistrationManager handles automatic cluster registration for agents
+	clusterRegistrationManager *clusterregistration.ClusterRegistrationManager
 }
 
 type handlersOnConnect func(agent types.Agent) error
@@ -410,6 +414,14 @@ func NewServer(ctx context.Context, kubeClient *kube.KubernetesClient, namespace
 	s.resources = resources.NewAgentResources()
 	s.logStream = logstream.NewServer()
 	s.terminalStreamServer = terminalstream.NewServer()
+
+	// Initialize cluster registration manager to handle automatic cluster registration for agents
+	s.clusterRegistrationManager = clusterregistration.NewClusterRegistrationManager(
+		s.options.selfClusterRegistrationEnabled,
+		namespace,
+		s.options.resourceProxyAddress,
+		kubeClient.Clientset,
+	)
 
 	return s, nil
 }

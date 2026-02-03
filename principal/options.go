@@ -80,6 +80,9 @@ type ServerOptions struct {
 	redisProxyLogger    *logging.CentralizedLogger
 	resourceProxyLogger *logging.CentralizedLogger
 	grpcEventLogger     *logging.CentralizedLogger
+
+	selfClusterRegistrationEnabled bool
+	resourceProxyAddress           string
 }
 
 type ServerOption func(o *Server) error
@@ -94,6 +97,8 @@ func defaultOptions() *ServerOptions {
 		eventProcessors:     10,
 		rootCa:              x509.NewCertPool(),
 		informerSyncTimeout: 60 * time.Second,
+
+		resourceProxyAddress: "argocd-agent-resource-proxy:9090",
 	}
 }
 
@@ -527,6 +532,20 @@ func WithSubsystemLoggers(resourceProxy, redisProxy, grpcEvent *logrus.Logger) S
 		} else {
 			o.options.grpcEventLogger = logging.GetDefaultLogger()
 		}
+		return nil
+	}
+}
+
+func WithClusterRegistration(enabled bool) ServerOption {
+	return func(o *Server) error {
+		o.options.selfClusterRegistrationEnabled = enabled
+		return nil
+	}
+}
+
+func WithResourceProxyAddress(address string) ServerOption {
+	return func(o *Server) error {
+		o.options.resourceProxyAddress = address
 		return nil
 	}
 }
