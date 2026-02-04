@@ -99,7 +99,8 @@ func NewPrincipalRunCommand() *cobra.Command {
 		otlpAddress  string
 		otlpInsecure bool
 
-		enableSelfClusterRegistration bool
+		enableSelfClusterRegistration     bool
+		selfClusterRegistrationSharedCert string
 	)
 	command := &cobra.Command{
 		Use:   "principal",
@@ -330,6 +331,9 @@ func NewPrincipalRunCommand() *cobra.Command {
 
 			// Self cluster registration options
 			opts = append(opts, principal.WithClusterRegistration(enableSelfClusterRegistration))
+			if selfClusterRegistrationSharedCert != "" {
+				opts = append(opts, principal.WithSelfClusterRegistrationSharedCert(selfClusterRegistrationSharedCert))
+			}
 
 			s, err := principal.NewServer(ctx, kubeConfig, namespace, opts...)
 			if err != nil {
@@ -490,6 +494,10 @@ func NewPrincipalRunCommand() *cobra.Command {
 	command.Flags().BoolVar(&enableSelfClusterRegistration, "enable-self-cluster-registration",
 		env.BoolWithDefault("ARGOCD_PRINCIPAL_ENABLE_SELF_CLUSTER_REGISTRATION", false),
 		"Allow agents with valid client certificates to self-register on connection")
+
+	command.Flags().StringVar(&selfClusterRegistrationSharedCert, "self-cluster-registration-shared-cert",
+		env.StringWithDefault("ARGOCD_PRINCIPAL_SELF_CLUSTER_REGISTRATION_SHARED_CERT", nil, ""),
+		"Name of the TLS secret containing the shared client certificate for cluster secrets (requires ca.crt, tls.crt, tls.key)")
 
 	return command
 }
