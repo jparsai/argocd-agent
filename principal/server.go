@@ -420,8 +420,9 @@ func NewServer(ctx context.Context, kubeClient *kube.KubernetesClient, namespace
 		s.options.selfClusterRegistrationEnabled,
 		namespace,
 		s.options.resourceProxyAddress,
-		s.options.selfClusterRegistrationSharedCert,
+		s.options.clientCertSecretName,
 		kubeClient.Clientset,
+		s.issuer,
 	)
 
 	return s, nil

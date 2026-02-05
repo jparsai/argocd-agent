@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"github.com/argoproj-labs/argocd-agent/internal/argocd/cluster"
+	"github.com/argoproj-labs/argocd-agent/internal/issuer"
 	"github.com/argoproj-labs/argocd-agent/internal/logging"
 	"github.com/sirupsen/logrus"
 	"k8s.io/client-go/kubernetes"
@@ -28,22 +29,25 @@ type ClusterRegistrationManager struct {
 	selfClusterRegistrationEnabled bool
 	namespace                      string
 	resourceProxyAddress           string
-	sharedClientCertSecretName     string
+	clientCertSecretName           string
 	kubeclient                     kubernetes.Interface
+	issuer                         issuer.Issuer
 }
 
-func NewClusterRegistrationManager(enabled bool, namespace, resourceProxyAddress, sharedClientCertSecretName string,
-	kubeclient kubernetes.Interface) *ClusterRegistrationManager {
+func NewClusterRegistrationManager(enabled bool, namespace, resourceProxyAddress, clientCertSecretName string,
+	kubeclient kubernetes.Interface, iss issuer.Issuer) *ClusterRegistrationManager {
 	return &ClusterRegistrationManager{
 		selfClusterRegistrationEnabled: enabled,
 		namespace:                      namespace,
 		resourceProxyAddress:           resourceProxyAddress,
-		sharedClientCertSecretName:     sharedClientCertSecretName,
+		clientCertSecretName:           clientCertSecretName,
 		kubeclient:                     kubeclient,
+		issuer:                         iss,
 	}
 }
 
-// RegisterCluster checks if a cluster secret exists for the agent and creates if it doesn't exist.
+// RegisterCluster checks if a cluster secret exists for the agent and creates/updates if needed.
+// If the secret exists but the token is invalid (e.g., signing key rotated), it will be refreshed.
 func (mgr *ClusterRegistrationManager) RegisterCluster(ctx context.Context, agentName string) error {
 	if !mgr.selfClusterRegistrationEnabled {
 		return nil
@@ -60,20 +64,80 @@ func (mgr *ClusterRegistrationManager) RegisterCluster(ctx context.Context, agen
 	}
 
 	if exists {
-		logCtx.Info("Cluster secret already exists for agent, skipping self cluster registration")
+		logCtx.Info("Cluster secret for agent exists")
+
+		// Check if this is a self-registered secret or a manually created one
+		isSelfRegistered, err := cluster.IsClusterSelfRegistered(ctx, mgr.kubeclient, mgr.namespace, agentName)
+		if err != nil {
+			return fmt.Errorf("could not check if cluster is self-registered: %w", err)
+		}
+
+		if !isSelfRegistered {
+			// This is a manually created secret, do not modify it
+			logCtx.Info("Manually created cluster secret exists, skipping self-registration")
+			return nil
+		}
+
+		logCtx.Info("Existing cluster secret is self-registered")
+
+		// Validate existing token, refresh if invalid
+		valid, err := mgr.validateClusterToken(ctx, agentName)
+		if err != nil {
+			logCtx.WithError(err).Info("Could not validate cluster token, will refresh")
+			valid = false
+		}
+
+		if valid {
+			logCtx.Info("Cluster secret already exists with valid token, skipping registration")
+			return nil
+		}
+
+		// Token is invalid, update it
+		logCtx.Info("Cluster token invalid or expired, refreshing")
+		if err := cluster.UpdateClusterBearerToken(ctx, mgr.kubeclient, mgr.namespace, agentName, mgr.issuer); err != nil {
+			return fmt.Errorf("failed to refresh cluster bearer token: %v", err)
+		}
+
+		logCtx.Info("Cluster bearer token refreshed successfully")
 		return nil
 	}
 
-	// Create the cluster secret
-	logCtx.Info("Registering agent's cluster")
+	// Create new cluster secret
+	logCtx.Info("Creating self-registered cluster secret for agent")
 
-	if err := cluster.CreateCluster(ctx, mgr.kubeclient, mgr.namespace, agentName, mgr.resourceProxyAddress, mgr.sharedClientCertSecretName); err != nil {
-		return fmt.Errorf("failed to self register agent's cluster and create cluster secret: %v", err)
+	if err := cluster.CreateClusterWithBearerToken(ctx, mgr.kubeclient, mgr.namespace, agentName, mgr.resourceProxyAddress, mgr.issuer, mgr.clientCertSecretName); err != nil {
+		return fmt.Errorf("failed to create self-registered cluster secret: %w", err)
 	}
 
-	logCtx.Info("Agent's self cluster registration completed successfully")
+	logCtx.Info("Agent cluster self-registration completed successfully")
 
 	return nil
+}
+
+// validateClusterToken checks if the existing cluster secret has a valid bearer token.
+func (mgr *ClusterRegistrationManager) validateClusterToken(ctx context.Context, agentName string) (bool, error) {
+	token, err := cluster.GetClusterBearerToken(ctx, mgr.kubeclient, mgr.namespace, agentName)
+	if err != nil {
+		return false, err
+	}
+
+	if token == "" {
+		return false, nil
+	}
+
+	// Validate the token using the issuer
+	claims, err := mgr.issuer.ValidateResourceProxyToken(token)
+	if err != nil {
+		return false, err
+	}
+
+	// Verify the token is for this agent
+	subject, err := claims.GetSubject()
+	if err != nil {
+		return false, err
+	}
+
+	return subject == agentName, nil
 }
 
 func (mgr *ClusterRegistrationManager) IsSelfClusterRegistrationEnabled() bool {

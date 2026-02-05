@@ -99,8 +99,8 @@ func NewPrincipalRunCommand() *cobra.Command {
 		otlpAddress  string
 		otlpInsecure bool
 
-		enableSelfClusterRegistration     bool
-		selfClusterRegistrationSharedCert string
+		enableSelfClusterRegistration bool
+		selfRegClientCertSecretName   string
 	)
 	command := &cobra.Command{
 		Use:   "principal",
@@ -329,10 +329,18 @@ func NewPrincipalRunCommand() *cobra.Command {
 			opts = append(opts, principal.WithRedis(redisAddress, redisPassword, redisCompressionType))
 			opts = append(opts, principal.WithHealthzPort(healthzPort))
 
-			// Self cluster registration options
+			// Self cluster registration validation and options
+			if enableSelfClusterRegistration {
+				if selfRegClientCertSecretName == "" {
+					cmdutil.Fatal("Self cluster registration requires --self-registration-client-cert-secret to be set")
+				}
+				if !enableResourceProxy {
+					cmdutil.Fatal("Self cluster registration requires --enable-resource-proxy to be enabled")
+				}
+			}
 			opts = append(opts, principal.WithClusterRegistration(enableSelfClusterRegistration))
-			if selfClusterRegistrationSharedCert != "" {
-				opts = append(opts, principal.WithSelfClusterRegistrationSharedCert(selfClusterRegistrationSharedCert))
+			if selfRegClientCertSecretName != "" {
+				opts = append(opts, principal.WithClientCertSecretName(selfRegClientCertSecretName))
 			}
 
 			s, err := principal.NewServer(ctx, kubeConfig, namespace, opts...)
@@ -493,11 +501,10 @@ func NewPrincipalRunCommand() *cobra.Command {
 
 	command.Flags().BoolVar(&enableSelfClusterRegistration, "enable-self-cluster-registration",
 		env.BoolWithDefault("ARGOCD_PRINCIPAL_ENABLE_SELF_CLUSTER_REGISTRATION", false),
-		"Allow agents with valid client certificates to self-register on connection")
-
-	command.Flags().StringVar(&selfClusterRegistrationSharedCert, "self-cluster-registration-shared-cert",
-		env.StringWithDefault("ARGOCD_PRINCIPAL_SELF_CLUSTER_REGISTRATION_SHARED_CERT", nil, ""),
-		"Name of the TLS secret containing the shared client certificate for cluster secrets (requires ca.crt, tls.crt, tls.key)")
+		"Allow agents with valid credentials to self-register on connection (requires --self-registration-client-cert-secret)")
+	command.Flags().StringVar(&selfRegClientCertSecretName, "self-registration-client-cert-secret",
+		env.StringWithDefault("ARGOCD_PRINCIPAL_SELF_REGISTRATION_CLIENT_CERT_SECRET", nil, ""),
+		"TLS secret containing shared client cert for self-registered cluster secrets (must have tls.crt, tls.key, ca.crt)")
 
 	return command
 }

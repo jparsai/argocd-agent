@@ -132,7 +132,7 @@ func Test_Authenticate(t *testing.T) {
 
 		// Create manager with self cluster registration disabled
 		kubeclient := kube.NewFakeKubeClient("argocd")
-		mgr := clusterregistration.NewClusterRegistrationManager(false, "argocd", "resource-proxy:8443", "", kubeclient)
+		mgr := clusterregistration.NewClusterRegistrationManager(false, "argocd", "resource-proxy:8443", "", kubeclient, iss)
 
 		auths, err := NewServer(queues, ams, iss, WithClusterRegistrationManager(mgr))
 		require.NoError(t, err)
@@ -153,9 +153,11 @@ func Test_Authenticate(t *testing.T) {
 		am.On("Authenticate", mock.Anything, mock.Anything).Return("user1", nil)
 		ams.RegisterMethod("userpass", am)
 
-		// Create manager with self cluster registration enabled but no CA secret to make it fail
+		// Create manager with self cluster registration enabled but no CA cert path to make it fail
 		kubeclient := kube.NewFakeClientsetWithResources()
-		mgr := clusterregistration.NewClusterRegistrationManager(true, "argocd", "resource-proxy:8443", "", kubeclient)
+		mockIss := issuermock.NewIssuer(t)
+		mockIss.On("IssueResourceProxyToken", "user1").Return("test-token", nil)
+		mgr := clusterregistration.NewClusterRegistrationManager(true, "argocd", "resource-proxy:8443", "", kubeclient, mockIss)
 
 		auths, err := NewServer(queues, ams, nil, WithClusterRegistrationManager(mgr))
 		require.NoError(t, err)
