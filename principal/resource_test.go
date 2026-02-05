@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"fmt"
 	"io"
 	"net/http"
@@ -78,14 +79,15 @@ func Test_resourceRequester(t *testing.T) {
 			ch <- 1
 		}()
 		<-ch
-		assert.Equal(t, http.StatusBadRequest, w.Result().StatusCode)
+		// Query param mode requires TLS client certificate
+		assert.Equal(t, http.StatusUnauthorized, w.Result().StatusCode)
 		defer w.Result().Body.Close()
 		body, err := io.ReadAll(w.Result().Body)
 		require.NoError(t, err)
-		assert.Equal(t, "no authorization found", string(body))
+		assert.Equal(t, "authentication failed", string(body))
 	})
 
-	t.Run("Missing agentName query parameter", func(t *testing.T) {
+	t.Run("No authorization method provided", func(t *testing.T) {
 		s := newResourceTestServer(t)
 		r := httptest.NewRequest("GET", "/", nil)
 		w := httptest.NewRecorder()
@@ -98,11 +100,12 @@ func Test_resourceRequester(t *testing.T) {
 			ch <- 1
 		}()
 		<-ch
-		assert.Equal(t, http.StatusBadRequest, w.Result().StatusCode)
+		// No bearer token and no agentName query parameter
+		assert.Equal(t, http.StatusUnauthorized, w.Result().StatusCode)
 		defer w.Result().Body.Close()
 		body, err := io.ReadAll(w.Result().Body)
 		require.NoError(t, err)
-		assert.Equal(t, "missing agentName query parameter", string(body))
+		assert.Equal(t, "authentication failed", string(body))
 	})
 
 	t.Run("Invalid agent name", func(t *testing.T) {
@@ -122,8 +125,7 @@ func Test_resourceRequester(t *testing.T) {
 		defer w.Result().Body.Close()
 		body, err := io.ReadAll(w.Result().Body)
 		require.NoError(t, err)
-		assert.Equal(t, "invalid agentName query parameter", string(body))
-
+		assert.Equal(t, "invalid agent name", string(body))
 	})
 
 	t.Run("Agent not connected", func(t *testing.T) {
@@ -256,4 +258,162 @@ func Test_resourceRegexp(t *testing.T) {
 			}
 		})
 	}
+}
+
+func Test_extractAgentFromAuth(t *testing.T) {
+	t.Run("Extracts agent from valid bearer token", func(t *testing.T) {
+		s := newResourceTestServer(t)
+
+		// Issue a valid resource proxy token
+		token, err := s.issuer.IssueResourceProxyToken("test-agent")
+		require.NoError(t, err)
+
+		r := httptest.NewRequest("GET", "/", nil)
+		r.Header.Set("Authorization", "Bearer "+token)
+
+		agentName, err := s.extractAgentFromAuth(r)
+		require.NoError(t, err)
+		assert.Equal(t, "test-agent", agentName)
+	})
+
+	t.Run("Returns error for invalid bearer token", func(t *testing.T) {
+		s := newResourceTestServer(t)
+
+		r := httptest.NewRequest("GET", "/", nil)
+		r.Header.Set("Authorization", "Bearer invalid-token")
+
+		_, err := s.extractAgentFromAuth(r)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid bearer token")
+	})
+
+	t.Run("Falls back to query param with TLS cert", func(t *testing.T) {
+		s := newResourceTestServer(t)
+
+		r := httptest.NewRequest("GET", "/?agentName=legacy-agent", nil)
+		r.TLS = &tls.ConnectionState{
+			PeerCertificates: []*x509.Certificate{{}},
+		}
+
+		agentName, err := s.extractAgentFromAuth(r)
+		require.NoError(t, err)
+		assert.Equal(t, "legacy-agent", agentName)
+	})
+
+	t.Run("Query param without TLS cert fails", func(t *testing.T) {
+		s := newResourceTestServer(t)
+
+		r := httptest.NewRequest("GET", "/?agentName=legacy-agent", nil)
+		// No TLS connection state
+
+		_, err := s.extractAgentFromAuth(r)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "requires TLS client certificate")
+	})
+
+	t.Run("Query param with empty TLS peer certs fails", func(t *testing.T) {
+		s := newResourceTestServer(t)
+
+		r := httptest.NewRequest("GET", "/?agentName=legacy-agent", nil)
+		r.TLS = &tls.ConnectionState{
+			PeerCertificates: []*x509.Certificate{}, // Empty
+		}
+
+		_, err := s.extractAgentFromAuth(r)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "requires TLS client certificate")
+	})
+
+	t.Run("No authorization returns error", func(t *testing.T) {
+		s := newResourceTestServer(t)
+
+		r := httptest.NewRequest("GET", "/", nil)
+		// No Authorization header, no query param, no TLS
+
+		_, err := s.extractAgentFromAuth(r)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no authorization found")
+	})
+
+	t.Run("Legacy mode extracts agent from TLS cert CN", func(t *testing.T) {
+		s := newResourceTestServer(t)
+
+		// Create a certificate with a Common Name
+		cert := &x509.Certificate{
+			Subject: pkix.Name{
+				CommonName: "tls-cert-agent",
+			},
+		}
+
+		r := httptest.NewRequest("GET", "/", nil)
+		r.TLS = &tls.ConnectionState{
+			PeerCertificates: []*x509.Certificate{cert},
+		}
+
+		agentName, err := s.extractAgentFromAuth(r)
+		require.NoError(t, err)
+		assert.Equal(t, "tls-cert-agent", agentName)
+	})
+
+	t.Run("Legacy mode fails if TLS cert has empty CN", func(t *testing.T) {
+		s := newResourceTestServer(t)
+
+		// Create a certificate with empty Common Name
+		cert := &x509.Certificate{
+			Subject: pkix.Name{
+				CommonName: "",
+			},
+		}
+
+		r := httptest.NewRequest("GET", "/", nil)
+		r.TLS = &tls.ConnectionState{
+			PeerCertificates: []*x509.Certificate{cert},
+		}
+
+		_, err := s.extractAgentFromAuth(r)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no authorization found")
+	})
+
+	t.Run("Query param takes precedence over TLS cert CN", func(t *testing.T) {
+		s := newResourceTestServer(t)
+
+		// Create a certificate with a Common Name
+		cert := &x509.Certificate{
+			Subject: pkix.Name{
+				CommonName: "tls-cert-agent",
+			},
+		}
+
+		// Request has query param (different name than cert CN)
+		r := httptest.NewRequest("GET", "/?agentName=query-agent", nil)
+		r.TLS = &tls.ConnectionState{
+			PeerCertificates: []*x509.Certificate{cert},
+		}
+
+		agentName, err := s.extractAgentFromAuth(r)
+		require.NoError(t, err)
+		// Should use query param, not cert CN
+		assert.Equal(t, "query-agent", agentName)
+	})
+
+	t.Run("Bearer token takes precedence over query param", func(t *testing.T) {
+		s := newResourceTestServer(t)
+
+		// Issue a valid resource proxy token for "token-agent"
+		token, err := s.issuer.IssueResourceProxyToken("token-agent")
+		require.NoError(t, err)
+
+		// Request has both bearer token and query param with different agent names
+		r := httptest.NewRequest("GET", "/?agentName=query-agent", nil)
+		r.Header.Set("Authorization", "Bearer "+token)
+		r.TLS = &tls.ConnectionState{
+			PeerCertificates: []*x509.Certificate{{}},
+		}
+
+		agentName, err := s.extractAgentFromAuth(r)
+		require.NoError(t, err)
+		// Should use bearer token's agent name, not query param
+		assert.Equal(t, "token-agent", agentName)
+	})
 }

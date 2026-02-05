@@ -48,30 +48,21 @@ const requestTimeout = 10 * time.Second
 func (s *Server) processResourceRequest(w http.ResponseWriter, r *http.Request, params resourceproxy.Params) {
 	logCtx := log().WithField("function", "resourceRequester")
 
-	// Make sure our request carries a client certificate
-	if r.TLS == nil || len(r.TLS.PeerCertificates) < 1 {
-		logCtx.Errorf("Unauthenticated request from client %s", r.RemoteAddr)
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte("no authorization found"))
-		return
-	}
-
-	// Get agent name from query parameter. The cluster secret URL format is:
-	// https://resource-proxy:8443?agentName=<agent-name>
-	agentName := r.URL.Query().Get("agentName")
-	if agentName == "" {
-		logCtx.Errorf("Missing agentName query parameter from client %s", r.RemoteAddr)
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte("missing agentName query parameter"))
+	// Extract agent name from JWT bearer token in Authorization header
+	agentName, err := s.extractAgentFromAuth(r)
+	if err != nil {
+		logCtx.WithError(err).Errorf("Authentication failed for client %s", r.RemoteAddr)
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte("authentication failed"))
 		return
 	}
 
 	// Validate the agent name format
 	errs := validation.NameIsDNSLabel(agentName, false)
 	if len(errs) > 0 {
-		logCtx.Errorf("Invalid agent name in query parameter: %v", errs)
+		logCtx.Errorf("Invalid agent name in token: %v", errs)
 		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte("invalid agentName query parameter"))
+		_, _ = w.Write([]byte("invalid agent name"))
 		return
 	}
 
@@ -394,4 +385,59 @@ func (s *Server) sendSynchronousRedisMessageToAgent(agentName string, connection
 			time.Sleep(100 * time.Millisecond)
 		}
 	}
+}
+
+// extractAgentFromAuth extracts the agent name from the request using multiple methods.
+// Authentication methods in order of preference:
+// 1. JWT bearer token in Authorization header (for self-registered clusters)
+// 2. Query parameter agentName + TLS client cert (for manual secrets with ?agentName=)
+// 3. TLS client certificate Common Name (legacy mode for backward compatibility)
+func (s *Server) extractAgentFromAuth(r *http.Request) (string, error) {
+	logCtx := log().WithField("function", "extractAgentFromAuth")
+
+	// Method 1: Try Authorization header first (Bearer token)
+	authHeader := r.Header.Get("Authorization")
+	if strings.HasPrefix(authHeader, "Bearer ") {
+		logCtx.Debug("Attempting JWT bearer token authentication")
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+		claims, err := s.issuer.ValidateResourceProxyToken(token)
+		if err != nil {
+			logCtx.WithError(err).Debug("Bearer token validation failed")
+			return "", fmt.Errorf("invalid bearer token: %v", err)
+		}
+		subject, err := claims.GetSubject()
+		if err != nil {
+			logCtx.WithError(err).Debug("Could not get subject from token")
+			return "", fmt.Errorf("could not get subject from token: %v", err)
+		}
+		logCtx.WithField("agent", subject).Debug("Successfully authenticated via bearer token")
+		return subject, nil
+	}
+
+	// Method 2: Query parameter with TLS client cert
+	agentName := r.URL.Query().Get("agentName")
+	if agentName != "" {
+		logCtx.WithField("agent", agentName).Debug("Using query parameter fallback for agent identification")
+		// In query param mode, we still require TLS client cert
+		if r.TLS == nil || len(r.TLS.PeerCertificates) < 1 {
+			logCtx.Debug("Query param mode missing TLS client certificate")
+			return "", fmt.Errorf("query param mode requires TLS client certificate")
+		}
+		logCtx.WithField("agent", agentName).Debug("Successfully authenticated via query parameter with TLS client cert")
+		return agentName, nil
+	}
+
+	// Method 3: Legacy mode - extract agent name from TLS client certificate CN
+	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+		cert := r.TLS.PeerCertificates[0]
+		agentName := cert.Subject.CommonName
+		if agentName != "" {
+			logCtx.WithField("agent", agentName).Debug("Successfully authenticated via TLS client certificate CN (legacy mode)")
+			return agentName, nil
+		}
+		logCtx.Debug("TLS client certificate has empty Common Name")
+	}
+
+	logCtx.Debug("No authorization method found")
+	return "", fmt.Errorf("no authorization found")
 }
