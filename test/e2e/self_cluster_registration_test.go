@@ -16,12 +16,15 @@ package e2e
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
+	"os/exec"
 	"testing"
 	"time"
 
 	"github.com/argoproj-labs/argocd-agent/internal/argocd/cluster"
+	"github.com/argoproj-labs/argocd-agent/internal/config"
 	"github.com/argoproj-labs/argocd-agent/test/e2e/fixture"
 	"github.com/argoproj/argo-cd/v3/common"
 	appv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
@@ -31,6 +34,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
+)
+
+const (
+	// caCertTempFile is the temporary file path for the CA certificate used during E2E tests
+	caCertTempFile = "/tmp/argocd-agent-e2e-ca.crt"
 )
 
 type SelfClusterRegistrationTestSuite struct {
@@ -442,11 +450,46 @@ func deleteClusterSecret(ctx context.Context, client fixture.KubeClient, agentNa
 }
 
 func enableSelfClusterRegistration() error {
-	envVar := "ARGOCD_PRINCIPAL_ENABLE_SELF_CLUSTER_REGISTRATION=true"
+	// Extract CA certificate from the principal's CA secret and write to temp file
+	if err := extractCACertificate(); err != nil {
+		return fmt.Errorf("failed to extract CA certificate: %v", err)
+	}
 
-	return os.WriteFile(fixture.EnvVariablesFromE2EFile, []byte(envVar+"\n"), 0644)
+	// Set both the enable flag and the CA path environment variables
+	envVars := fmt.Sprintf("ARGOCD_PRINCIPAL_ENABLE_SELF_CLUSTER_REGISTRATION=true\nARGOCD_PRINCIPAL_RESOURCE_PROXY_TLS_CA_PATH=%s\n", caCertTempFile)
+
+	return os.WriteFile(fixture.EnvVariablesFromE2EFile, []byte(envVars), 0644)
 }
 
 func disableSelfClusterRegistration() error {
+	// Clean up the temporary CA certificate file
+	_ = os.Remove(caCertTempFile)
+
 	return os.Remove(fixture.EnvVariablesFromE2EFile)
+}
+
+// extractCACertificate extracts the CA certificate from the principal's CA secret
+// and writes it to a temporary file for use by self-cluster registration.
+func extractCACertificate() error {
+	cmd := exec.Command("kubectl", "--context", "vcluster-control-plane",
+		"-n", "argocd", "get", "secret", config.SecretNamePrincipalCA,
+		"-o", "jsonpath={.data.tls\\.crt}")
+
+	output, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to get CA certificate from secret: %v", err)
+	}
+
+	// Decode base64 encoded certificate data
+	decoded, err := base64.StdEncoding.DecodeString(string(output))
+	if err != nil {
+		return fmt.Errorf("failed to decode CA certificate: %v", err)
+	}
+
+	// Write the certificate to the temp file
+	if err := os.WriteFile(caCertTempFile, decoded, 0644); err != nil {
+		return fmt.Errorf("failed to write CA certificate to file: %v", err)
+	}
+
+	return nil
 }

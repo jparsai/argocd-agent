@@ -16,17 +16,20 @@ package clusterregistration
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/argoproj-labs/argocd-agent/internal/argocd/cluster"
 	"github.com/argoproj-labs/argocd-agent/internal/config"
+	issuermocks "github.com/argoproj-labs/argocd-agent/internal/issuer/mocks"
 	"github.com/argoproj-labs/argocd-agent/internal/tlsutil"
 	"github.com/argoproj-labs/argocd-agent/test/fake/kube"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 )
 
 const (
@@ -39,29 +42,32 @@ func getClusterSecretName(agentName string) string {
 	return "cluster-" + agentName
 }
 
-func createTestCASecret(t *testing.T, kubeclient kubernetes.Interface, namespace string) {
+func createTestCACertFile(t *testing.T) string {
 	t.Helper()
-	caCertPEM, caKeyPEM, err := tlsutil.GenerateCaCertificate(config.SecretNamePrincipalCA)
+	caCertPEM, _, err := tlsutil.GenerateCaCertificate(config.SecretNamePrincipalCA)
 	require.NoError(t, err, "generate CA certificate")
 
-	_, err = kubeclient.CoreV1().Secrets(namespace).Create(context.Background(), &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      config.SecretNamePrincipalCA,
-			Namespace: namespace,
-		},
-		Type: corev1.SecretTypeTLS,
-		Data: map[string][]byte{
-			"tls.crt": []byte(caCertPEM),
-			"tls.key": []byte(caKeyPEM),
-		},
-	}, metav1.CreateOptions{})
-	require.NoError(t, err, "create CA secret")
+	tmpDir := t.TempDir()
+	caPath := filepath.Join(tmpDir, "ca.crt")
+	err = os.WriteFile(caPath, []byte(caCertPEM), 0600)
+	require.NoError(t, err, "write CA cert file")
+
+	return caPath
+}
+
+func createMockIssuer(t *testing.T) *issuermocks.Issuer {
+	iss := issuermocks.NewIssuer(t)
+	iss.On("IssueResourceProxyToken", mock.Anything).Return("test-token", nil).Maybe()
+	iss.On("ValidateResourceProxyToken", mock.Anything).Return(nil, nil).Maybe()
+	return iss
 }
 
 func Test_NewClusterRegistrationManager(t *testing.T) {
 	t.Run("Create manager with self cluster registration enabled", func(t *testing.T) {
 		kubeclient := kube.NewFakeKubeClient(testNamespace)
-		mgr := NewClusterRegistrationManager(true, testNamespace, testResourceProxyAddr, "", kubeclient)
+		iss := createMockIssuer(t)
+		caCertPath := createTestCACertFile(t)
+		mgr := NewClusterRegistrationManager(true, testNamespace, testResourceProxyAddr, caCertPath, kubeclient, iss)
 
 		require.NotNil(t, mgr)
 		assert.True(t, mgr.selfClusterRegistrationEnabled)
@@ -72,7 +78,8 @@ func Test_NewClusterRegistrationManager(t *testing.T) {
 
 	t.Run("Create manager with self cluster registration disabled", func(t *testing.T) {
 		kubeclient := kube.NewFakeKubeClient(testNamespace)
-		mgr := NewClusterRegistrationManager(false, testNamespace, testResourceProxyAddr, "", kubeclient)
+		iss := createMockIssuer(t)
+		mgr := NewClusterRegistrationManager(false, testNamespace, testResourceProxyAddr, "", kubeclient, iss)
 
 		require.NotNil(t, mgr)
 		assert.False(t, mgr.selfClusterRegistrationEnabled)
@@ -84,7 +91,8 @@ func Test_NewClusterRegistrationManager(t *testing.T) {
 func Test_RegisterCluster(t *testing.T) {
 	t.Run("Returns nil when self cluster registration is disabled", func(t *testing.T) {
 		kubeclient := kube.NewFakeKubeClient(testNamespace)
-		mgr := NewClusterRegistrationManager(false, testNamespace, testResourceProxyAddr, "", kubeclient)
+		iss := createMockIssuer(t)
+		mgr := NewClusterRegistrationManager(false, testNamespace, testResourceProxyAddr, "", kubeclient, iss)
 
 		err := mgr.RegisterCluster(context.Background(), testAgentName)
 
@@ -99,39 +107,14 @@ func Test_RegisterCluster(t *testing.T) {
 		assert.Error(t, err) // Should not find the secret
 	})
 
-	t.Run("Skips registration when cluster secret already exists", func(t *testing.T) {
-
-		existingSecret := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      getClusterSecretName(testAgentName),
-				Namespace: testNamespace,
-			},
-			Data: map[string][]byte{
-				"server": []byte("https://existing-server"),
-			},
-		}
-		kubeclient := kube.NewFakeClientsetWithResources(existingSecret)
-		mgr := NewClusterRegistrationManager(true, testNamespace, testResourceProxyAddr, "", kubeclient)
-
-		err := mgr.RegisterCluster(context.Background(), testAgentName)
-
-		assert.NoError(t, err)
-
-		// Verify secret still has original data
-		secret, err := kubeclient.CoreV1().Secrets(testNamespace).Get(
-			context.Background(),
-			getClusterSecretName(testAgentName),
-			metav1.GetOptions{},
-		)
-		require.NoError(t, err)
-		assert.Equal(t, []byte("https://existing-server"), secret.Data["server"])
-	})
-
 	t.Run("Creates cluster secret when it does not exist", func(t *testing.T) {
-
 		kubeclient := kube.NewFakeClientsetWithResources()
-		createTestCASecret(t, kubeclient, testNamespace)
-		mgr := NewClusterRegistrationManager(true, testNamespace, testResourceProxyAddr, "", kubeclient)
+		caCertPath := createTestCACertFile(t)
+
+		iss := issuermocks.NewIssuer(t)
+		iss.On("IssueResourceProxyToken", testAgentName).Return("test-bearer-token", nil)
+
+		mgr := NewClusterRegistrationManager(true, testNamespace, testResourceProxyAddr, caCertPath, kubeclient, iss)
 
 		err := mgr.RegisterCluster(context.Background(), testAgentName)
 
@@ -148,22 +131,30 @@ func Test_RegisterCluster(t *testing.T) {
 		assert.Equal(t, getClusterSecretName(testAgentName), secret.Name)
 	})
 
-	t.Run("Returns error when CA secret is missing", func(t *testing.T) {
+	t.Run("Returns error when CA file is missing", func(t *testing.T) {
 		kubeclient := kube.NewFakeClientsetWithResources()
-		mgr := NewClusterRegistrationManager(true, testNamespace, testResourceProxyAddr, "", kubeclient)
+
+		iss := issuermocks.NewIssuer(t)
+		iss.On("IssueResourceProxyToken", testAgentName).Return("test-bearer-token", nil)
+
+		mgr := NewClusterRegistrationManager(true, testNamespace, testResourceProxyAddr, "/nonexistent/ca.crt", kubeclient, iss)
 
 		err := mgr.RegisterCluster(context.Background(), testAgentName)
 
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to self register agent's cluster")
+		assert.Contains(t, err.Error(), "failed to create cluster secret")
 	})
 
 	t.Run("Creates cluster secret with correct agent name label", func(t *testing.T) {
 		kubeclient := kube.NewFakeClientsetWithResources()
-		createTestCASecret(t, kubeclient, testNamespace)
-		mgr := NewClusterRegistrationManager(true, testNamespace, testResourceProxyAddr, "", kubeclient)
+		caCertPath := createTestCACertFile(t)
 
 		agentName := "my-special-agent"
+		iss := issuermocks.NewIssuer(t)
+		iss.On("IssueResourceProxyToken", agentName).Return("test-bearer-token", nil)
+
+		mgr := NewClusterRegistrationManager(true, testNamespace, testResourceProxyAddr, caCertPath, kubeclient, iss)
+
 		err := mgr.RegisterCluster(context.Background(), agentName)
 
 		require.NoError(t, err)
@@ -176,5 +167,94 @@ func Test_RegisterCluster(t *testing.T) {
 		)
 		require.NoError(t, err)
 		assert.Equal(t, agentName, secret.Labels[cluster.LabelKeyClusterAgentMapping])
+	})
+}
+
+func Test_IsSelfClusterRegistrationEnabled(t *testing.T) {
+	t.Run("Returns true when enabled", func(t *testing.T) {
+		kubeclient := kube.NewFakeKubeClient(testNamespace)
+		iss := createMockIssuer(t)
+		caCertPath := createTestCACertFile(t)
+		mgr := NewClusterRegistrationManager(true, testNamespace, testResourceProxyAddr, caCertPath, kubeclient, iss)
+		assert.True(t, mgr.IsSelfClusterRegistrationEnabled())
+	})
+
+	t.Run("Returns false when disabled", func(t *testing.T) {
+		kubeclient := kube.NewFakeKubeClient(testNamespace)
+		iss := createMockIssuer(t)
+		mgr := NewClusterRegistrationManager(false, testNamespace, testResourceProxyAddr, "", kubeclient, iss)
+		assert.False(t, mgr.IsSelfClusterRegistrationEnabled())
+	})
+}
+
+func Test_RegisterCluster_TokenValidation(t *testing.T) {
+	t.Run("Skips registration when cluster secret exists with valid token", func(t *testing.T) {
+		kubeclient := kube.NewFakeClientsetWithResources()
+		caCertPath := createTestCACertFile(t)
+
+		// Create mock issuer that returns a valid token
+		iss := issuermocks.NewIssuer(t)
+		iss.On("IssueResourceProxyToken", testAgentName).Return("valid-token", nil)
+
+		// Create mock claims for token validation
+		mockClaims := issuermocks.NewClaims(t)
+		mockClaims.On("GetSubject").Return(testAgentName, nil)
+		iss.On("ValidateResourceProxyToken", "valid-token").Return(mockClaims, nil)
+
+		mgr := NewClusterRegistrationManager(true, testNamespace, testResourceProxyAddr, caCertPath, kubeclient, iss)
+
+		// First registration - creates secret
+		err := mgr.RegisterCluster(context.Background(), testAgentName)
+		require.NoError(t, err)
+
+		// Second registration - should skip because token is valid
+		err = mgr.RegisterCluster(context.Background(), testAgentName)
+		require.NoError(t, err)
+	})
+
+	t.Run("Refreshes token when existing token is invalid", func(t *testing.T) {
+		kubeclient := kube.NewFakeClientsetWithResources()
+		caCertPath := createTestCACertFile(t)
+
+		// Create mock issuer
+		iss := issuermocks.NewIssuer(t)
+		iss.On("IssueResourceProxyToken", testAgentName).Return("new-token", nil)
+
+		// First call creates secret, subsequent calls validate/refresh
+		iss.On("ValidateResourceProxyToken", "new-token").Return(nil, fmt.Errorf("token validation failed"))
+
+		mgr := NewClusterRegistrationManager(true, testNamespace, testResourceProxyAddr, caCertPath, kubeclient, iss)
+
+		// First registration - creates secret
+		err := mgr.RegisterCluster(context.Background(), testAgentName)
+		require.NoError(t, err)
+
+		// Second registration - token validation fails, should refresh
+		err = mgr.RegisterCluster(context.Background(), testAgentName)
+		require.NoError(t, err)
+	})
+
+	t.Run("Refreshes token when subject does not match agent name", func(t *testing.T) {
+		kubeclient := kube.NewFakeClientsetWithResources()
+		caCertPath := createTestCACertFile(t)
+
+		// Create mock issuer
+		iss := issuermocks.NewIssuer(t)
+		iss.On("IssueResourceProxyToken", testAgentName).Return("token-for-agent", nil)
+
+		// Mock claims that return wrong subject
+		mockClaims := issuermocks.NewClaims(t)
+		mockClaims.On("GetSubject").Return("different-agent", nil)
+		iss.On("ValidateResourceProxyToken", "token-for-agent").Return(mockClaims, nil)
+
+		mgr := NewClusterRegistrationManager(true, testNamespace, testResourceProxyAddr, caCertPath, kubeclient, iss)
+
+		// First registration - creates secret
+		err := mgr.RegisterCluster(context.Background(), testAgentName)
+		require.NoError(t, err)
+
+		// Second registration - subject mismatch, should refresh
+		err = mgr.RegisterCluster(context.Background(), testAgentName)
+		require.NoError(t, err)
 	})
 }

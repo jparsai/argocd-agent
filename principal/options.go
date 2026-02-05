@@ -81,9 +81,9 @@ type ServerOptions struct {
 	resourceProxyLogger *logging.CentralizedLogger
 	grpcEventLogger     *logging.CentralizedLogger
 
-	selfClusterRegistrationEnabled    bool
-	resourceProxyAddress              string
-	selfClusterRegistrationSharedCert string
+	selfClusterRegistrationEnabled bool
+	resourceProxyAddress           string
+	caCertPath                     string
 }
 
 type ServerOption func(o *Server) error
@@ -551,9 +551,9 @@ func WithResourceProxyAddress(address string) ServerOption {
 	}
 }
 
-func WithSelfClusterRegistrationSharedCert(secretName string) ServerOption {
+func WithCACertPath(path string) ServerOption {
 	return func(o *Server) error {
-		o.options.selfClusterRegistrationSharedCert = secretName
+		o.options.caCertPath = path
 		return nil
 	}
 }
