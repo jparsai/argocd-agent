@@ -2323,6 +2323,7 @@ func TestServer_newGPGKeyCallback(t *testing.T) {
 				for _, agentName := range tt.expectedAgents {
 					q := s.queues.SendQ(agentName)
 					require.NotNil(t, q)
+					require.Equal(t, 1, q.Len())
 
 					if q.Len() > 0 {
 						ev, shutdown := q.Get()
