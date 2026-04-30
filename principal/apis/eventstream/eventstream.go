@@ -424,6 +424,7 @@ func (s *Server) Subscribe(subs eventstreamapi.EventStream_SubscribeServer) erro
 	if s.metrics != nil {
 		// increase counter when an agent is connected with principal
 		s.metrics.AgentConnected.Inc()
+		s.metrics.AgentConnectionAttempts.WithLabelValues(c.agentName).Inc()
 
 		// store connection time to find average connection time of all agents
 		metrics.SetAgentConnectionTime(c.agentName, c.start)

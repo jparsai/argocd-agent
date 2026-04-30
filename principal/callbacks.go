@@ -506,6 +506,10 @@ func (s *Server) newAppSetCallback(outbound *v1alpha1.ApplicationSet) {
 	}
 	ev := s.events.ApplicationSetEvent(event.Create, outbound)
 	s.ha.ForwardEventForReplication(event.New(ev, event.TargetApplicationSet), "", replication.DirectionOutbound)
+
+	if s.metrics != nil {
+		s.metrics.AppSetCreated.Inc()
+	}
 }
 
 func (s *Server) updateAppSetCallback(old *v1alpha1.ApplicationSet, new *v1alpha1.ApplicationSet) {
@@ -514,6 +518,10 @@ func (s *Server) updateAppSetCallback(old *v1alpha1.ApplicationSet, new *v1alpha
 	}
 	ev := s.events.ApplicationSetEvent(event.SpecUpdate, new)
 	s.ha.ForwardEventForReplication(event.New(ev, event.TargetApplicationSet), "", replication.DirectionOutbound)
+
+	if s.metrics != nil {
+		s.metrics.AppSetUpdated.Inc()
+	}
 }
 
 func (s *Server) deleteAppSetCallback(outbound *v1alpha1.ApplicationSet) {
@@ -522,6 +530,10 @@ func (s *Server) deleteAppSetCallback(outbound *v1alpha1.ApplicationSet) {
 	}
 	ev := s.events.ApplicationSetEvent(event.Delete, outbound)
 	s.ha.ForwardEventForReplication(event.New(ev, event.TargetApplicationSet), "", replication.DirectionOutbound)
+
+	if s.metrics != nil {
+		s.metrics.AppSetDeleted.Inc()
+	}
 }
 
 func (s *Server) newRepositoryCallback(outbound *corev1.Secret) {
@@ -677,7 +689,7 @@ func (s *Server) newGPGKeyCallback(outbound *corev1.ConfigMap) {
 	s.syncGPGKeyToManagedAgents(ctx, outbound, event.Create, logCtx)
 
 	if s.metrics != nil {
-		s.metrics.GPGKeyCreated.Inc()
+		s.metrics.GPGKeyCount.Set(float64(len(outbound.Data)))
 	}
 }
 
@@ -695,7 +707,7 @@ func (s *Server) updateGPGKeyCallback(old, new *corev1.ConfigMap) {
 	s.syncGPGKeyToManagedAgents(ctx, new, event.SpecUpdate, logCtx)
 
 	if s.metrics != nil {
-		s.metrics.GPGKeyUpdated.Inc()
+		s.metrics.GPGKeyCount.Set(float64(len(new.Data)))
 	}
 }
 
@@ -713,7 +725,7 @@ func (s *Server) deleteGPGKeyCallback(outbound *corev1.ConfigMap) {
 	s.syncGPGKeyToManagedAgents(ctx, outbound, event.Delete, logCtx)
 
 	if s.metrics != nil {
-		s.metrics.GPGKeyDeleted.Inc()
+		s.metrics.GPGKeyCount.Set(0)
 	}
 }
 
