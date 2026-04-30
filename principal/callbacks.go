@@ -677,7 +677,7 @@ func (s *Server) newGPGKeyCallback(outbound *corev1.ConfigMap) {
 	s.syncGPGKeyToManagedAgents(ctx, outbound, event.Create, logCtx)
 
 	if s.metrics != nil {
-		s.metrics.GPGKeyCreated.Inc()
+		s.metrics.GPGKeyCount.Set(float64(len(outbound.Data)))
 	}
 }
 
@@ -695,7 +695,7 @@ func (s *Server) updateGPGKeyCallback(old, new *corev1.ConfigMap) {
 	s.syncGPGKeyToManagedAgents(ctx, new, event.SpecUpdate, logCtx)
 
 	if s.metrics != nil {
-		s.metrics.GPGKeyUpdated.Inc()
+		s.metrics.GPGKeyCount.Set(float64(len(new.Data)))
 	}
 }
 
@@ -713,7 +713,7 @@ func (s *Server) deleteGPGKeyCallback(outbound *corev1.ConfigMap) {
 	s.syncGPGKeyToManagedAgents(ctx, outbound, event.Delete, logCtx)
 
 	if s.metrics != nil {
-		s.metrics.GPGKeyDeleted.Inc()
+		s.metrics.GPGKeyCount.Set(0)
 	}
 }
 
