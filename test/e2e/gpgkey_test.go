@@ -321,6 +321,12 @@ func (suite *GPGKeyTestSuite) Test_GPGKey_UseAndUpdatePreExistingConfigMap() {
 	err := suite.ManagedAgentClient.Create(suite.Ctx, &orphanCM, metav1.CreateOptions{})
 	requires.NoError(err)
 
+	// Delete ConfigMap manually created on the managed agent
+	defer func() {
+		cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: common.ArgoCDGPGKeysConfigMapName, Namespace: "argocd"}}
+		_ = suite.ManagedAgentClient.Delete(suite.Ctx, cm, metav1.DeleteOptions{})
+	}()
+
 	// Verify the orphan ConfigMap has no source-uid annotation
 	agentCM := corev1.ConfigMap{}
 	err = suite.ManagedAgentClient.Get(suite.Ctx, key, &agentCM, metav1.GetOptions{})
