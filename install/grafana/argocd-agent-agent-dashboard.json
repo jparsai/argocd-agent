@@ -307,6 +307,152 @@
     {
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 33 },
+      "id": 29,
+      "title": "gRPC",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "showPoints": "auto"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 34 },
+      "id": 30,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "sum by (grpc_type) (rate(grpc_client_started_total{namespace=~\"$namespace\", agent_name=~\"$agent_name\", job=~\"$job\"}[5m]))",
+          "legendFormat": "{{grpc_type}}",
+          "refId": "A"
+        }
+      ],
+      "title": "gRPC Calls Started",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "showPoints": "auto"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 34 },
+      "id": 31,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "sum by (grpc_code) (rate(grpc_client_handled_total{namespace=~\"$namespace\", agent_name=~\"$agent_name\", job=~\"$job\"}[5m]))",
+          "legendFormat": "{{grpc_code}}",
+          "refId": "A"
+        }
+      ],
+      "title": "gRPC Status Codes",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "showPoints": "auto"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 42 },
+      "id": 32,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "sum (rate(grpc_client_msg_received_total{namespace=~\"$namespace\", agent_name=~\"$agent_name\", job=~\"$job\"}[5m]))",
+          "legendFormat": "Received",
+          "refId": "A"
+        },
+        {
+          "expr": "sum (rate(grpc_client_msg_sent_total{namespace=~\"$namespace\", agent_name=~\"$agent_name\", job=~\"$job\"}[5m]))",
+          "legendFormat": "Sent",
+          "refId": "B"
+        }
+      ],
+      "title": "gRPC Message Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "showPoints": "auto"
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 42 },
+      "id": 33,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(grpc_client_handling_seconds_bucket{namespace=~\"$namespace\", agent_name=~\"$agent_name\", job=~\"$job\"}[5m])))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(grpc_client_handling_seconds_bucket{namespace=~\"$namespace\", agent_name=~\"$agent_name\", job=~\"$job\"}[5m])))",
+          "legendFormat": "p95",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(grpc_client_handling_seconds_bucket{namespace=~\"$namespace\", agent_name=~\"$agent_name\", job=~\"$job\"}[5m])))",
+          "legendFormat": "p99",
+          "refId": "C"
+        }
+      ],
+      "title": "gRPC Call Latency",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 50 },
       "id": 20,
       "title": "Kubernetes API",
       "type": "row"
@@ -326,7 +472,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 34 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 51 },
       "id": 21,
       "options": {
         "legend": { "displayMode": "list", "placement": "bottom" },
@@ -357,7 +503,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 34 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 51 },
       "id": 22,
       "options": {
         "legend": { "displayMode": "list", "placement": "bottom" },
@@ -385,7 +531,7 @@
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 42 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 59 },
       "id": 23,
       "title": "Process Health",
       "type": "row"
@@ -405,7 +551,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 43 },
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 60 },
       "id": 24,
       "options": {
         "legend": { "displayMode": "list", "placement": "bottom" },
@@ -436,7 +582,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 43 },
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 60 },
       "id": 25,
       "options": {
         "legend": { "displayMode": "list", "placement": "bottom" },
@@ -470,7 +616,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 43 },
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 60 },
       "id": 26,
       "options": {
         "colorMode": "value",
@@ -503,7 +649,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 43 },
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 60 },
       "id": 27,
       "options": {
         "legend": { "displayMode": "list", "placement": "bottom" },

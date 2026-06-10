@@ -26,6 +26,8 @@ import (
 	"sync"
 	"time"
 
+	grpcprom "github.com/grpc-ecosystem/go-grpc-middleware/providers/prometheus"
+
 	"github.com/argoproj-labs/argocd-agent/internal/argocd/cluster"
 	"github.com/argoproj-labs/argocd-agent/internal/auth"
 	"github.com/argoproj-labs/argocd-agent/internal/backend"
@@ -158,6 +160,9 @@ type Server struct {
 	// metrics holds principal side metrics
 	metrics *metrics.PrincipalMetrics
 
+	// grpcServerMetrics holds gRPC server-side Prometheus metrics (nil when metrics are disabled)
+	grpcServerMetrics *grpcprom.ServerMetrics
+
 	// Minimum time duration for agent to wait before sending next keepalive ping to principal
 	// if agent sends ping more often than specified interval then connection will be dropped
 	keepAliveMinimumInterval time.Duration
@@ -259,6 +264,7 @@ func NewServer(ctx context.Context, kubeClient *kube.KubernetesClient, namespace
 
 	if s.options.metricsPort > 0 {
 		s.metrics = metrics.NewPrincipalMetrics()
+		s.grpcServerMetrics = metrics.NewServerGRPCMetrics()
 		metricsRegistered.Do(func() {
 			metrics.RegisterK8sClientMetrics()
 			metrics.RegisterQueueMetrics("argocd_principal")
@@ -843,7 +849,7 @@ func (s *Server) Start(ctx context.Context, errch chan error) error {
 
 	// Finally, start accepting connections from agents
 	if s.options.serveGRPC {
-		if err := s.serveGRPC(ctx, s.metrics, errch); err != nil {
+		if err := s.serveGRPC(ctx, s.metrics, s.grpcServerMetrics, errch); err != nil {
 			return err
 		}
 	}
