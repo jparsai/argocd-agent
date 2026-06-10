@@ -670,8 +670,70 @@
       "type": "timeseries"
     },
     {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "showPoints": "auto"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 44 },
+      "id": 38,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "sum by (reason) (rate(principal_event_writer_send_errors_total{namespace=~\"$namespace\"}[5m]))",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ],
+      "title": "EventWriter Send Errors",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "showPoints": "auto"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 44 },
+      "id": 39,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "sum by (event_type) (rate(argocd_principal_event_writer_events_discarded_total{namespace=~\"$namespace\"}[5m]))",
+          "legendFormat": "{{event_type}}",
+          "refId": "A"
+        }
+      ],
+      "title": "EventWriter Events Discarded",
+      "type": "timeseries"
+    },
+    {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 44 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 52 },
       "id": 30,
       "title": "Kubernetes API",
       "type": "row"
@@ -691,7 +753,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 45 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 53 },
       "id": 31,
       "options": {
         "legend": { "displayMode": "list", "placement": "bottom" },
@@ -722,7 +784,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 45 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 53 },
       "id": 32,
       "options": {
         "legend": { "displayMode": "list", "placement": "bottom" },
@@ -750,7 +812,7 @@
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 53 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 61 },
       "id": 33,
       "title": "Process Health",
       "type": "row"
@@ -770,7 +832,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 54 },
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 62 },
       "id": 34,
       "options": {
         "legend": { "displayMode": "list", "placement": "bottom" },
@@ -801,7 +863,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 54 },
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 62 },
       "id": 35,
       "options": {
         "legend": { "displayMode": "list", "placement": "bottom" },
@@ -835,7 +897,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 54 },
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 62 },
       "id": 36,
       "options": {
         "colorMode": "value",
@@ -868,7 +930,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 54 },
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 62 },
       "id": 37,
       "options": {
         "legend": { "displayMode": "list", "placement": "bottom" },
