@@ -266,6 +266,7 @@ func NewServer(ctx context.Context, kubeClient *kube.KubernetesClient, namespace
 		s.metrics = metrics.NewPrincipalMetrics()
 		s.grpcServerMetrics = metrics.NewServerGRPCMetrics()
 		metricsRegistered.Do(func() {
+			metrics.RegisterBuildInfo(s.version)
 			metrics.RegisterK8sClientMetrics()
 			metrics.RegisterQueueMetrics("argocd_principal")
 		})
@@ -494,6 +495,14 @@ func NewServer(ctx context.Context, kubeClient *kube.KubernetesClient, namespace
 		s.redisProxy = redisproxy.New(defaultRedisProxyListenerAddr, s.options.redisAddress, s.sendSynchronousRedisMessageToAgent, s.options.redisProxyLogger)
 		// Set the principal namespace so the redis proxy can handle apps in the principal's namespace
 		s.redisProxy.SetPrincipalNamespace(s.namespace)
+		if s.metrics != nil {
+			s.redisProxy.SetOnRequest(func(agentName, command string) {
+				s.metrics.RedisProxyRequests.WithLabelValues(agentName, command).Inc()
+			})
+			s.redisProxy.SetOnError(func(agentName, command string) {
+				s.metrics.RedisProxyErrors.WithLabelValues(agentName, command).Inc()
+			})
+		}
 		// Only set the agent lookup function for destination-based mapping
 		if s.destinationBasedMapping {
 			s.redisProxy.SetAgentLookupFunc(s.GetAgentForApp)

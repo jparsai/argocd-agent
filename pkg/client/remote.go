@@ -115,6 +115,7 @@ type Remote struct {
 	grpcClientMetrics *grpcprom.ClientMetrics
 
 	onAuthenticated onAuthenticatedFunc
+	onAuthFailure   func()
 }
 
 type RemoteOption func(r *Remote) error
@@ -663,21 +664,24 @@ func (r *Remote) Connect(ctx context.Context, forceReauth bool) error {
 					conn.Close()
 				}
 			}()
-			if ierr != nil {
-				st, ok := status.FromError(ierr)
-				if ok {
-					if st.Code() == codes.FailedPrecondition {
-						log().Errorf("Version mismatch with principal: %v", st.Message())
-						return ierr // preserve gRPC status for retriable() check
-					}
-					if st.Code() == codes.InvalidArgument {
-						log().Errorf("Agent version validation failed: %v", st.Message())
-						return ierr // preserve gRPC status for retriable() check
-					}
-				}
-				logrus.Warnf("Auth failure: %v (retrying in %v)", ierr, cBackoff.Step())
-				return ierr
+		if ierr != nil {
+			if r.onAuthFailure != nil {
+				r.onAuthFailure()
 			}
+			st, ok := status.FromError(ierr)
+			if ok {
+				if st.Code() == codes.FailedPrecondition {
+					log().Errorf("Version mismatch with principal: %v", st.Message())
+					return ierr // preserve gRPC status for retriable() check
+				}
+				if st.Code() == codes.InvalidArgument {
+					log().Errorf("Agent version validation failed: %v", st.Message())
+					return ierr // preserve gRPC status for retriable() check
+				}
+			}
+			logrus.Warnf("Auth failure: %v (retrying in %v)", ierr, cBackoff.Step())
+			return ierr
+		}
 
 			r.tokenMu.Lock()
 			defer r.tokenMu.Unlock()
@@ -767,6 +771,11 @@ func (r *Remote) SetClientID(id string) {
 // handshake, receiving the principal's namespace from the AuthResponse.
 func (r *Remote) SetOnAuthenticated(fn onAuthenticatedFunc) {
 	r.onAuthenticated = fn
+}
+
+// SetOnAuthFailure registers a callback invoked on each authentication failure.
+func (r *Remote) SetOnAuthFailure(fn func()) {
+	r.onAuthFailure = fn
 }
 
 func log() *logrus.Entry {

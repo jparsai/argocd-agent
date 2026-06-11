@@ -50,13 +50,18 @@ func (a *Agent) maintainConnection() error {
 							continue
 						}
 					}
-					a.SetConnected(true)
+				a.SetConnected(true)
+				if a.metrics != nil {
+					a.metrics.ConnectionStatus.Set(1)
+					a.metrics.ConnectionStartTimestamp.SetToCurrentTime()
+					a.metrics.ConnectionAttempts.Inc()
 				}
-			} else {
-				err = a.handleStreamEvents()
-				if err != nil {
-					log().Warnf("Error while handling stream events: %v", err)
-				}
+			}
+		} else {
+			err = a.handleStreamEvents()
+			if err != nil {
+				log().Warnf("Error while handling stream events: %v", err)
+			}
 			}
 			time.Sleep(100 * time.Millisecond)
 		}
@@ -178,6 +183,12 @@ func (a *Agent) handleStreamEvents() error {
 	// goroutines (recv, send, heartbeat) exit and don't leak across reconnects.
 	streamCtx, streamCancel := context.WithCancel(a.context)
 	defer streamCancel()
+	defer func() {
+		if a.metrics != nil {
+			a.metrics.ConnectionStatus.Set(0)
+			a.metrics.ConnectionStartTimestamp.Set(0)
+		}
+	}()
 
 	if a.eventWriter == nil {
 		a.eventWriter = event.NewEventWriter("", stream)

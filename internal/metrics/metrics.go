@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/argoproj-labs/argocd-agent/internal/version"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
@@ -66,6 +67,14 @@ type PrincipalMetrics struct {
 	EventWriterEventsDiscarded *prometheus.CounterVec
 
 	PrincipalErrors *prometheus.CounterVec
+
+	AgentConnectionAttempts *prometheus.CounterVec
+
+	ResourceProxyRequests *prometheus.CounterVec
+	ResourceProxyErrors   *prometheus.CounterVec
+
+	RedisProxyRequests *prometheus.CounterVec
+	RedisProxyErrors   *prometheus.CounterVec
 }
 
 // AgentMetrics holds metrics of agent
@@ -76,6 +85,15 @@ type AgentMetrics struct {
 	PropagationLatency         *prometheus.HistogramVec
 	EventWriterEventsDiscarded *prometheus.CounterVec
 	AgentErrors                *prometheus.CounterVec
+	ConnectionStatus         prometheus.Gauge
+	ConnectionStartTimestamp prometheus.Gauge
+	ConnectionAttempts       prometheus.Counter
+	AuthFailures             prometheus.Counter
+
+	ResourceProxyRequests prometheus.Counter
+	ResourceProxyErrors   prometheus.Counter
+	RedisProxyRequests    *prometheus.CounterVec
+	RedisProxyErrors      *prometheus.CounterVec
 }
 
 func NewInformerMetrics(label string) *InformerMetrics {
@@ -102,7 +120,6 @@ func NewPrincipalMetrics() *PrincipalMetrics {
 			Name: "principal_agent_avg_connection_time",
 			Help: "The average time all agents are connected for (in minutes)",
 		}),
-
 		ApplicationCreated: promauto.NewCounter(prometheus.CounterOpts{
 			Name: "principal_applications_created",
 			Help: "The total number of applications created on the control plane",
@@ -175,6 +192,29 @@ func NewPrincipalMetrics() *PrincipalMetrics {
 			Name: "principal_errors",
 			Help: "The total number of errors occurred in principal",
 		}, []string{"resource_type"}),
+
+		AgentConnectionAttempts: promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: "argocd_principal_agent_connection_attempts_total",
+			Help: "The total number of times each agent connected to the principal",
+		}, []string{"agent_name"}),
+
+		ResourceProxyRequests: promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: "argocd_principal_resource_proxy_requests_total",
+			Help: "The total number of resource proxy requests received",
+		}, []string{"agent_name"}),
+		ResourceProxyErrors: promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: "argocd_principal_resource_proxy_errors_total",
+			Help: "The total number of resource proxy request failures",
+		}, []string{"agent_name", "reason"}),
+
+		RedisProxyRequests: promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: "argocd_principal_redis_proxy_requests_total",
+			Help: "The total number of Redis proxy requests forwarded to agents",
+		}, []string{"agent_name", "command"}),
+		RedisProxyErrors: promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: "argocd_principal_redis_proxy_errors_total",
+			Help: "The total number of Redis proxy request failures",
+		}, []string{"agent_name", "command"}),
 	}
 }
 
@@ -209,7 +249,51 @@ func NewAgentMetrics() *AgentMetrics {
 			Name: "agent_errors",
 			Help: "The total number of errors occurred in agent",
 		}, []string{"resource_type"}),
+
+		ConnectionStatus: promauto.NewGauge(prometheus.GaugeOpts{
+			Name: "argocd_agent_connection_status",
+			Help: "Whether the agent is currently connected to the principal (1 = connected, 0 = disconnected)",
+		}),
+		ConnectionStartTimestamp: promauto.NewGauge(prometheus.GaugeOpts{
+			Name: "argocd_agent_connection_start_timestamp_seconds",
+			Help: "Unix timestamp of when the current connection to the principal was established",
+		}),
+		ConnectionAttempts: promauto.NewCounter(prometheus.CounterOpts{
+			Name: "argocd_agent_connection_attempts_total",
+			Help: "The total number of times the agent connected to the principal",
+		}),
+
+		AuthFailures: promauto.NewCounter(prometheus.CounterOpts{
+			Name: "argocd_agent_auth_failures_total",
+			Help: "The total number of authentication failures when connecting to the principal",
+		}),
+		ResourceProxyRequests: promauto.NewCounter(prometheus.CounterOpts{
+			Name: "argocd_agent_resource_proxy_requests_total",
+			Help: "The total number of resource proxy requests processed by the agent",
+		}),
+		ResourceProxyErrors: promauto.NewCounter(prometheus.CounterOpts{
+			Name: "argocd_agent_resource_proxy_errors_total",
+			Help: "The total number of resource proxy request failures on the agent",
+		}),
+		RedisProxyRequests: promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: "argocd_agent_redis_proxy_requests_total",
+			Help: "The total number of Redis proxy requests processed by the agent",
+		}, []string{"command"}),
+		RedisProxyErrors: promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: "argocd_agent_redis_proxy_errors_total",
+			Help: "The total number of Redis proxy request failures on the agent",
+		}, []string{"command"}),
 	}
+}
+
+// RegisterBuildInfo registers a gauge that exports build metadata as labels.
+func RegisterBuildInfo(v *version.Version) {
+	promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "argocd_agent_build_info",
+		Help: "Build metadata for the running argocd-agent binary",
+	}, []string{"version", "git_revision"}).
+		WithLabelValues(v.Version(), v.GitRevision()).
+		Set(1)
 }
 
 // AvgCalculationInterval is time interval for agent connection time calculation
