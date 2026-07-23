@@ -33,7 +33,13 @@ fi
 E2E_ENV_FILE="/tmp/argocd-agent-e2e"
 if [ -f "$E2E_ENV_FILE" ]; then
     source "$E2E_ENV_FILE"
+    if [ -n "$ARGOCD_AUTONOMOUS_AGENT_SPIRE_AGENT_SOCKET" ]; then
+        export ARGOCD_AGENT_SPIRE_AGENT_SOCKET="$ARGOCD_AUTONOMOUS_AGENT_SPIRE_AGENT_SOCKET"
+        AGENT_CREDS="spiffe-jwt:"
+    fi
 fi
+
+AGENT_CREDS="${AGENT_CREDS:-mtls:any}"
 
 RACE_FLAG=""
 if [ "${ENABLE_DATA_RACE_DETECTOR}" = "true" ]; then
@@ -42,7 +48,7 @@ fi
 
 go run ${RACE_FLAG} github.com/argoproj-labs/argocd-agent/cmd/argocd-agent agent \
     --agent-mode autonomous \
-    --creds mtls:any \
+    --creds "${AGENT_CREDS}" \
     --server-address 127.0.0.1 \
     --kubecontext vcluster-agent-autonomous \
     --namespace ${ARGOCD_AUTONOMOUS_NAMESPACE} \

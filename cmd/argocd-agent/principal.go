@@ -29,12 +29,14 @@ import (
 	"github.com/argoproj-labs/argocd-agent/internal/auth"
 	"github.com/argoproj-labs/argocd-agent/internal/auth/header"
 	"github.com/argoproj-labs/argocd-agent/internal/auth/mtls"
+	"github.com/argoproj-labs/argocd-agent/internal/auth/spiffejwt"
 	"github.com/argoproj-labs/argocd-agent/internal/auth/userpass"
 	"github.com/argoproj-labs/argocd-agent/internal/config"
 	"github.com/argoproj-labs/argocd-agent/internal/env"
 	"github.com/argoproj-labs/argocd-agent/internal/grpcutil"
 	"github.com/argoproj-labs/argocd-agent/internal/kube"
 	"github.com/argoproj-labs/argocd-agent/internal/labels"
+	"github.com/argoproj-labs/argocd-agent/internal/spire"
 	"github.com/argoproj-labs/argocd-agent/internal/tlsutil"
 	"github.com/argoproj-labs/argocd-agent/internal/tracing"
 	"github.com/argoproj-labs/argocd-agent/pkg/ha"
@@ -43,6 +45,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"github.com/spiffe/go-spiffe/v2/bundle/jwtbundle"
 )
 
 // NewPrincipalRunCommand returns a new principal run command.
@@ -130,6 +133,9 @@ func NewPrincipalRunCommand() *cobra.Command {
 		haAdminPort                    int
 		haAllowedReplClients           []string
 		haReplicationInitialAckTimeout time.Duration
+
+		// SPIRE integration
+		spireAgentSocket string
 	)
 	command := &cobra.Command{
 		Use:   "principal",
@@ -212,8 +218,20 @@ func NewPrincipalRunCommand() *cobra.Command {
 
 			opts = append(opts, principal.WithNamespaces(allowedNamespaces...))
 
-			// Configure TLS or plaintext mode
-			if insecurePlaintext {
+			// Configure TLS: SPIRE, plaintext, or static certs
+			var spireSource *spire.Source
+			if spireAgentSocket != "" {
+				logrus.Infof("Using SPIRE for TLS credentials (socket: %s)", spireAgentSocket)
+				spireSource, err = spire.New(ctx, spireAgentSocket)
+				if err != nil {
+					cmdutil.Fatal("Failed to connect to SPIRE Agent: %v", err)
+				}
+				defer spireSource.Close()
+				opts = append(opts, principal.WithSPIRESource(spireSource))
+				if authMethod == "" {
+					authMethod = `spiffe-jwt:spiffe://[^/]+/(.+)`
+				}
+			} else if insecurePlaintext {
 				logrus.Warn("INSECURE: Running in plaintext mode - ensure Istio or similar service mesh provides mTLS")
 				opts = append(opts, principal.WithInsecurePlaintext())
 			} else if allowTLSGenerate {
@@ -229,8 +247,8 @@ func NewPrincipalRunCommand() *cobra.Command {
 				opts = append(opts, principal.WithTLSKeyPairFromSecret(kubeConfig.Clientset, namespace, tlsSecretName))
 			}
 
-			// Only load root CA if not in plaintext mode
-			if !insecurePlaintext {
+			// Only load root CA if not in plaintext or SPIRE mode
+			if !insecurePlaintext && spireAgentSocket == "" {
 				if rootCaPath != "" {
 					logrus.Infof("Loading root CA certificate from file %s", rootCaPath)
 					opts = append(opts, principal.WithTLSRootCaFromFile(rootCaPath))
@@ -333,6 +351,24 @@ func NewPrincipalRunCommand() *cobra.Command {
 				err = authMethods.RegisterMethod("userpass", userauth)
 				if err != nil {
 					cmdutil.Fatal("Could not register userpass auth method: %v", err)
+				}
+			case "spiffe-jwt":
+				var regex *regexp.Regexp
+				if authConfig != "" {
+					regex, err = regexp.Compile(authConfig)
+					if err != nil {
+						cmdutil.Fatal("Error compiling spiffe-jwt agent id regex: %v", err)
+					}
+				}
+				var jwtBundleSource jwtbundle.Source
+				if spireSource != nil {
+					jwtBundleSource = spireSource.JWTSource()
+				}
+				jwtAuth := spiffejwt.NewSPIFFEJWTAuthentication(regex, config.SPIREJWTAudience, jwtBundleSource)
+				logrus.Infof("Using SPIFFE JWT authentication (pattern: %s, audience: %s)", authConfig, config.SPIREJWTAudience)
+				err = authMethods.RegisterMethod("spiffe-jwt", jwtAuth)
+				if err != nil {
+					cmdutil.Fatal("Could not register spiffe-jwt auth method: %v", err)
 				}
 			case "header":
 				// Generic header-based authentication extracts agent ID from any HTTP header
@@ -661,6 +697,10 @@ func NewPrincipalRunCommand() *cobra.Command {
 		env.StringWithDefault("ARGOCD_PRINCIPAL_LABEL_SELECTOR", nil, ""),
 		"Kubernetes label selector to restrict which resources the principal watches")
 
+	command.Flags().StringVar(&spireAgentSocket, "spire-agent-socket",
+		env.StringWithDefault("ARGOCD_PRINCIPAL_SPIRE_AGENT_SOCKET", nil, ""),
+		"SPIRE Agent socket URI (e.g., unix:///run/spire/sockets/agent.sock). When set, TLS credentials are obtained from SPIRE instead of static certs")
+
 	command.Flags().StringVar(&kubeConfig, "kubeconfig", "", "Path to a kubeconfig file to use")
 	command.Flags().StringVar(&kubeContext, "kubecontext", "", "Override the default kube context")
 
@@ -779,6 +819,8 @@ func parseAuth(authStr string) (string, string, error) {
 		return "mtls", p[1], nil
 	case "header":
 		return "header", p[1], nil
+	case "spiffe-jwt":
+		return "spiffe-jwt", p[1], nil
 	default:
 		return "", "", fmt.Errorf("unknown auth method: %s", p[0])
 	}

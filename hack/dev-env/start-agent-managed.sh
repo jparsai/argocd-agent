@@ -36,7 +36,13 @@ if [ -f "$E2E_ENV_FILE" ]; then
     export ARGOCD_AGENT_DESTINATION_BASED_MAPPING=${ARGOCD_AGENT_DESTINATION_BASED_MAPPING:-false}
     export ARGOCD_AGENT_CREATE_NAMESPACE=${ARGOCD_AGENT_CREATE_NAMESPACE:-false}
     export ARGOCD_AGENT_ON_APPLICATION_RECREATE=${ARGOCD_AGENT_ON_APPLICATION_RECREATE:-ignore}
+    if [ -n "$ARGOCD_AGENT_SPIRE_AGENT_SOCKET" ]; then
+        export ARGOCD_AGENT_SPIRE_AGENT_SOCKET
+        AGENT_CREDS="spiffe-jwt:"
+    fi
 fi
+
+AGENT_CREDS="${AGENT_CREDS:-mtls:any}"
 
 RACE_FLAG=""
 if [ "${ENABLE_DATA_RACE_DETECTOR}" = "true" ]; then
@@ -46,7 +52,7 @@ fi
 go run ${RACE_FLAG} github.com/argoproj-labs/argocd-agent/cmd/argocd-agent agent \
     --agent-mode managed \
     --allowed-namespaces '*' \
-    --creds "mtls:any" \
+    --creds "${AGENT_CREDS}" \
     --server-address 127.0.0.1 \
     --kubecontext vcluster-agent-managed \
     --namespace ${ARGOCD_MANAGED_NAMESPACE} \

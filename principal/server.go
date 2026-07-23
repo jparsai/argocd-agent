@@ -1194,6 +1194,19 @@ func (s *Server) loadTLSConfig() (*tls.Config, error) {
 		return nil, nil
 	}
 
+	// When SPIRE is configured, use SPIRE SVID instead of TLS certificate and key
+	if s.options.spireSource != nil {
+		log().Infof("Using SPIRE for server TLS credentials")
+		tlsConfig := &tls.Config{
+			GetCertificate: s.options.spireSource.GetCertificate(),
+			ClientAuth:     tls.NoClientCert,
+			MinVersion:     s.options.tlsMinVersion,
+			MaxVersion:     s.options.tlsMaxVersion,
+			CipherSuites:   s.options.tlsCiphers,
+		}
+		return tlsConfig, nil
+	}
+
 	var cert tls.Certificate
 	var err error
 
